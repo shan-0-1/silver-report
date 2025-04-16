@@ -515,7 +515,7 @@ def generate_report(df):
     <div style="font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: auto; padding: 20px; border: 1px solid #eee; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
         <h2 style="text-align: center; border-bottom: 1px solid #ccc; padding-bottom: 10px;">银价采购分析报告</h2>
         <p><strong>报告日期：</strong>{current['日期'].strftime('%Y-%m-%d')}</p>
-        <p><strong title='{HOVER_TEXTS['price']}'>当前价格：</strong>{price:.2f} USD</p>
+        <p><strong title='{HOVER_TEXTS['price']}'>当前价格：</strong>{price:.2f} CNY</p>
         <p><strong title='{HOVER_TEXTS['indicator']}'>核心指标（工业指标）：</strong>{indicator:.2f} <span title='{HOVER_TEXTS['threshold']}'>（买入参考阈值：低于 {threshold:.2f}）</span></p>
 
         <h3 title='{HOVER_TEXTS['signal']}'>🛒 今日建议：{'<span style="color:green; font-weight:bold;">立即采购</span>' if current['采购信号'] else '<span style="color:orange; font-weight:bold;">持币观望</span>'}</h3>
@@ -769,10 +769,10 @@ def create_visualization(df):
 
     # --- 定义悬停模板 ---
     # <extra></extra> 用于移除 Plotly 默认添加的额外信息框
-    hovertemplate_price = "<b>价格</b>: %{y:.2f} USD<br>日期: %{x|%Y-%m-%d}<br><i>来源: 每日收盘价</i><extra></extra>"
+    hovertemplate_price = "<b>价格</b>: %{y:.2f} CNY<br>日期: %{x|%Y-%m-%d}<br><i>来源: 每日收盘价</i><extra></extra>"
     hovertemplate_sma = "<b>%{data.name}</b>: %{y:.2f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 最近%{customdata}天收盘价的算术平均</i><extra></extra>"
     hovertemplate_ema = "<b>%{data.name}</b>: %{y:.2f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 指数移动平均，近期价格权重更高</i><extra></extra>"
-    hovertemplate_signal = "<b>⭐采购信号⭐</b><br>价格: %{y:.2f} USD<br>日期: %{x|%Y-%m-%d}<br><i>策略建议买入点</i><extra></extra>"
+    hovertemplate_signal = "<b>⭐采购信号⭐</b><br>价格: %{y:.2f} CNY<br>日期: %{x|%Y-%m-%d}<br><i>策略建议买入点</i><extra></extra>"
     hovertemplate_indicator = "<b>核心工业指标</b>: %{y:.2f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: (价/短均)*(价/长均)*(1-动量)</i><extra></extra>"
     hovertemplate_threshold = "<b>%{data.name}</b>: %{y:.2f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 近期工业指标的25%分位数</i><extra></extra>"
     hovertemplate_rsi = "<b>修正RSI</b>: %{y:.1f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 基于14日平均涨跌幅，衡量超买超卖</i><extra></extra>"
@@ -781,7 +781,7 @@ def create_visualization(df):
 
 
     # --- 行 1: 价格与信号 ---
-    fig.add_trace(go.Scatter(x=df['日期'], y=df['Price'], mode='lines', name='白银价格 (USD)',
+    fig.add_trace(go.Scatter(x=df['日期'], y=df['Price'], mode='lines', name='白银价格 (CNY)',
                              line=dict(color='navy', width=1.5), legendgroup='price', legendrank=1,
                              hovertemplate=hovertemplate_price),
                   row=1, col=1)
@@ -881,7 +881,7 @@ def create_visualization(df):
         legend_title_text='图例说明',
         margin=dict(l=60, r=60, t=100, b=60)
     )
-    fig.update_yaxes(title_text="价格 (USD)", row=1, col=1)
+    fig.update_yaxes(title_text="价格 (CNY)", row=1, col=1)
     fig.update_yaxes(title_text="指标值", row=2, col=1)
     fig.update_yaxes(title_text="RSI 值 (0-100)", row=3, col=1)
     fig.update_xaxes(title_text="日期", row=3, col=1)
