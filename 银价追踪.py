@@ -623,7 +623,55 @@ def generate_report(df):
          report_html += "<h3>📉 三日价格变化参考：数据不足</h3>"
 
     report_html += "</div>" # Close main div
-    return report_html
+
+    # --- 计算用于动态分析的数据 --- 
+    condition_scores = sum([current.get(f'core_cond{i}_met', False) for i in range(1, 7)])
+    base_req_met = condition_scores >= 4
+    peak_filter_series = peak_filter(df)
+    peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True
+    peak_status_text = '<span style="color:green;">未触发阻断</span>' if peak_filter_passed else '<span style="color:red;">触发阻断</span>'
+    atr_denominator = atr_upper - atr_lower
+    atr_value = ((price - atr_lower) / atr_denominator) * 100 if atr_denominator != 0 else 50.0
+    atr_overbought = atr_value > 80
+    # (peak_status_text 现在只反映形态过滤，需要组合ATR状态)
+    if not peak_filter_passed:
+        peak_status_display = '<span style=\"color:red;\">形态不利</span>'
+    elif atr_overbought:
+        peak_status_display = '<span style=\"color:red;\">ATR超买({atr_value:.1f}%)</span>'
+    else:
+        peak_status_display = '<span style=\"color:green;\">通过</span>'
+
+    last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
+    interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
+    interval_ok = interval_days >= MIN_PURCHASE_INTERVAL
+    interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (还需等待 {max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)</span>'
+
+    block_reasons = []
+    if not base_req_met: block_reasons.append(f"核心条件不足({condition_scores}/6)")
+    if not interval_ok: block_reasons.append(f"采购间隔限制(还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)")
+    if not peak_filter_passed: block_reasons.append("价格形态不利")
+    if atr_overbought: block_reasons.append(f"ATR通道超买({atr_value:.1f}%)")
+
+    # 准备分析数据字典
+    analysis_data = {
+        'current_date': current['日期'],
+        'signal': current['采购信号'],
+        'condition_scores': condition_scores,
+        'conditions_explanation': CONDITION_EXPLANATIONS['core'], # 传递解释文本
+        'current_conditions_met': {f'cond{i}': current.get(f'core_cond{i}_met', False) for i in range(1, 7)},
+        'peak_status_display': peak_status_display,
+        'interval_days': interval_days,
+        'interval_check_text': interval_check_text,
+        'min_purchase_interval': MIN_PURCHASE_INTERVAL,
+        'base_req_met': base_req_met,
+        'block_reasons': block_reasons
+    }
+
+    # 返回包含报告内容和分析数据的字典
+    return {
+        'report_content': report_html,
+        'analysis_data': analysis_data
+    }
 
 def create_visualization(df):
     """
@@ -778,9 +826,12 @@ if __name__ == "__main__":
     df = calculate_strategy(df)
     df = generate_signals(df)
 
-    # 3. 生成报告 HTML
-    print("正在生成文本报告...")
-    report_html_content = generate_report(df)
+    # 3. 生成报告数据
+    print("正在生成报告数据...")
+    # 修改：接收包含内容和分析数据的字典
+    report_data = generate_report(df)
+    report_html_content = report_data['report_content']
+    analysis_data = report_data['analysis_data'] # 提取分析数据
 
     # 4. 生成图表 Figure 对象
     print("正在生成图表...")
@@ -800,7 +851,7 @@ if __name__ == "__main__":
         print(f"错误：将 Plotly 图表转换为 HTML 时失败: {e}")
         chart_html_div = "<p style='color:red;'>图表生成失败。</p>"
 
-    # 6. 构建完整的 HTML 页面 (修改 CSS 样式)
+    # 6. 构建完整的 HTML 页面 (使用提取的 analysis_data)
     final_html = f"""
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -852,6 +903,7 @@ if __name__ == "__main__":
 
         <div class="report-content">
             <h2>📈 关键指标与最新信号</h2>
+            <!-- 使用 generate_report 返回的基础报告内容 -->
             {report_html_content}
         </div>
 
@@ -861,14 +913,14 @@ if __name__ == "__main__":
             {chart_html_div}
         </div>
 
+        <!-- 修改：重新加入详细说明，并使用 analysis_data 构建动态部分 -->
         <div class="report-content" style="margin-top: 30px;">
             <h2>📖 图表解读与策略说明 (小白友好版)</h2>
             <p><strong>请注意：</strong>以下所有内容均基于本程序设定的量化策略自动生成，是对历史数据分析的参考展示，<strong>绝对不构成任何投资建议</strong>！市场有风险，投资需谨慎，请务必结合您自身的判断和风险承受能力做决策。</p>
-
             <h3>图表怎么看？</h3>
             <p>我们主要看三个图：</p>
             <ul>
-                <li><strong>上图 (价格与信号):</strong>
+                 <li><strong>上图 (价格与信号):</strong>
                     <ul>
                         <li><strong>深蓝色线 (价格):</strong> 这就是每天的白银收盘价格，是我们最关心的基础数据。</li>
                         <li><strong>橙色虚线 (短期均线):</strong> 可以理解为最近一段时间价格的"平均成本线"。价格在线上方，说明短期看涨的人多；价格在线下方，说明短期看跌的人多。</li>
@@ -892,9 +944,8 @@ if __name__ == "__main__":
                     </ul>
                 </li>
             </ul>
-
             <h3>策略是怎么决定买不买的？</h3>
-            <p>这个策略比较保守，需要同时满足多个条件才会发出 <span style="color:red; font-size: 1.2em;">▲</span> 采购信号：</p>
+             <p>这个策略比较保守，需要同时满足多个条件才会发出 <span style="color:red; font-size: 1.2em;">▲</span> 采购信号：</p>
             <ol>
                 <li><strong>主要条件（至少满足4个）：</strong>
                     <ul>
@@ -910,32 +961,31 @@ if __name__ == "__main__":
                     <ul>
                         <li>短期内价格形态不利（比如冲高后快速回落）。</li>
                         <li>价格处于ATR波动通道的超买区域。</li>
-                        <li>距离上次发出信号的时间太短（默认为1天，由 `MIN_PURCHASE_INTERVAL` 控制）。</li>
+                        <li>距离上次发出信号的时间太短（默认为{analysis_data['min_purchase_interval']}天）。</li>
                     </ul>
                 </li>
             </ol>
             <p><strong>只有同时满足"主要条件达标"和"无阻断信号"时，策略才会建议买入。</strong> 动态调整的窗口期是为了让策略在市场长期横盘后变得更灵敏。</p>
 
-            <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({current['日期'].strftime('%Y-%m-%d')}) 的解读：</h3>
-            <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购</span>' if current['采购信号'] else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
-            {f'''
+            <!-- 使用 analysis_data 构建动态解读 -->
+            <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data['current_date'].strftime('%Y-%m-%d')}) 的解读：</h3>
+            <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购</span>' if analysis_data['signal'] else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
             <p><strong>原因分析：</strong></p>
             <ul>
-                <li>今天共满足了 <strong>{condition_scores}</strong> 个主要买入条件 (策略要求至少满足 <strong>4</strong> 个)。</li>
+                <li>今天共满足了 <strong>{analysis_data['condition_scores']}</strong> 个主要买入条件 (策略要求至少满足 <strong>4</strong> 个)。</li>
                 <li>具体来看：
                     <ul>
-                        {''.join([f'<li><span style="color:{"green" if current.get(f"core_cond{i}_met", False) else "red"};">{ "✔️" if current.get(f"core_cond{i}_met", False) else "❌"}</span> 条件{i} ({CONDITION_EXPLANATIONS["core"][f"cond{i}"][0]}): {CONDITION_EXPLANATIONS["core"][f"cond{i}"][1]}</li>' for i in range(1, 7)])}
+                        {''.join([f'<li><span style="color:{"green" if analysis_data["current_conditions_met"][f"cond{i}"] else "red"};">{ "✔️" if analysis_data["current_conditions_met"][f"cond{i}"] else "❌"}</span> 条件{i} ({analysis_data["conditions_explanation"][f"cond{i}"][0]}): {analysis_data["conditions_explanation"][f"cond{i}"][1]}</li>' for i in range(1, 7)])}
                     </ul>
                 </li>
                 <li>信号阻断检查：
                     <ul>
-                        <li>价格形态/ATR过滤：{peak_status_text}</li>
-                        <li>采购间隔检查 (要求≥{MIN_PURCHASE_INTERVAL}天)：距离上次信号 {interval_days} 天 → {interval_check_text}</li>
+                        <li>价格形态/ATR过滤：{analysis_data['peak_status_display']}</li>
+                        <li>采购间隔检查 (要求≥{analysis_data['min_purchase_interval']}天)：距离上次信号 {analysis_data['interval_days']} 天 → {analysis_data['interval_check_text']}</li>
                     </ul>
                 </li>
-                {'<li><strong>结论：</strong><span style="color:green;">由于满足了足够的买入条件 ({condition_scores}/6)，且没有触发阻断信号，因此策略建议采购。</span></li>' if current['采购信号'] else f'<li><strong>结论：</strong><span style="color:red;">{("由于满足的核心条件数量不足 (" + str(condition_scores) + "/6)，" if not base_req_met else "") + ("且存在阻断信号：" + " + ".join(block_reasons) if block_reasons else ("虽然核心条件满足，但存在阻断信号：" + " + ".join(block_reasons)) if block_reasons else ("虽然没有阻断，但核心条件未满足 (" + str(condition_scores) + "/6)。"))}因此策略建议持币观望。</span></li>'}
+                {'<li><strong>结论：</strong><span style="color:green;">由于满足了足够的买入条件 ({analysis_data["condition_scores"]}/6)，且没有触发阻断信号，因此策略建议采购。</span></li>' if analysis_data['signal'] else f'<li><strong>结论：</strong><span style="color:red;">{(f"由于满足的核心条件数量不足 ({analysis_data['condition_scores']}/6)，" if not analysis_data['base_req_met'] else "") + ("具体阻断原因：" + " + ".join(analysis_data['block_reasons']) if analysis_data['block_reasons'] else "")}因此策略建议持币观望。</span></li>'}
             </ul>
-            ''' if 'condition_scores' in locals() and 'CONDITION_EXPLANATIONS' in locals() and 'peak_status_text' in locals() and 'interval_days' in locals() and 'interval_check_text' in locals() and 'base_req_met' in locals() and 'block_reasons' in locals() else "<p>无法生成详细的今日原因分析。</p>"}
             <p><strong>再次强调：</strong> 这只是策略根据历史数据和设定规则给出的参考，真实市场远比模型复杂。请独立思考，谨慎决策！</p>
         </div>
 
