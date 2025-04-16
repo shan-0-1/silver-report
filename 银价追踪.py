@@ -652,21 +652,91 @@ def generate_report(df):
     if not peak_filter_passed: block_reasons.append("价格形态不利")
     if atr_overbought: block_reasons.append(f"ATR通道超买({atr_value:.1f}%)")
 
-    # 准备分析数据字典
+    # --- 准备用于动态分析的数据 --- 
+    indicator_threshold_diff = threshold - indicator # 正数表示低于阈值
+    rsi_oversold_diff = 45 - rsi # 正数表示低于45
+
+    # --- 为指标差距添加更详细的定性描述 ---
+    indicator_diff_desc = ""
+    if indicator_threshold_diff > 0.1:
+        indicator_diff_desc = f"显著低于阈值 ({indicator:.2f} vs {threshold:.2f})"
+    elif indicator_threshold_diff > 0:
+         indicator_diff_desc = f"低于阈值 ({indicator:.2f} vs {threshold:.2f})"
+    elif indicator_threshold_diff == 0:
+         indicator_diff_desc = f"恰好达到阈值 ({indicator:.2f})"
+    elif indicator_threshold_diff > -0.05: # 在阈值上方，但差距小于 0.05
+         indicator_diff_desc = f"略高于阈值 ({indicator:.2f} vs {threshold:.2f}，差距{abs(indicator_threshold_diff):.2f})"
+    else: # 在阈值上方，差距大于等于 0.05
+        indicator_diff_desc = f"仍高于阈值 ({indicator:.2f} vs {threshold:.2f}，差距{abs(indicator_threshold_diff):.2f})"
+        
+    rsi_diff_desc = ""
+    if rsi_oversold_diff > 10: # RSI < 35
+        rsi_diff_desc = f"深入超卖区 ({rsi:.1f} vs 45)"
+    elif rsi_oversold_diff > 5: # 35 <= RSI < 40
+        rsi_diff_desc = f"位于超卖区 ({rsi:.1f} vs 45)"
+    elif rsi_oversold_diff > 0: # 40 <= RSI < 45
+        rsi_diff_desc = f"接近超卖区 ({rsi:.1f} vs 45)"
+    elif rsi_oversold_diff == 0: # RSI = 45
+        rsi_diff_desc = f"恰好在超卖线 ({rsi:.1f})"
+    elif rsi_oversold_diff > -5: # 45 < RSI <= 50
+         rsi_diff_desc = f"略高于超卖线 ({rsi:.1f} vs 45)"
+    else: # RSI > 50
+        rsi_diff_desc = f"远离超卖区 ({rsi:.1f} vs 45)"
+
+    signal_strength = "" # 初始化信号强度描述
+    if current['采购信号']:
+        if condition_scores == 6:
+            signal_strength = "强信号 (所有条件满足)"
+        elif condition_scores == 5:
+            signal_strength = "明确信号 (多数条件满足)"
+        else: # condition_scores == 4
+            signal_strength = "边缘信号 (勉强满足条件)"
+    
+    # ... (peak_status_display, interval_check_text, block_reasons, current_conditions_met 的计算保持不变) ...
+    peak_filter_series = peak_filter(df)
+    peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True
+    atr_denominator = atr_upper - atr_lower
+    atr_value = ((price - atr_lower) / atr_denominator) * 100 if atr_denominator != 0 else 50.0
+    atr_overbought = atr_value > 80
+    if not peak_filter_passed:
+        peak_status_display = '<span style="color:red;">形态不利</span>'
+    elif atr_overbought:
+        peak_status_display = f'<span style="color:red;">ATR超买({atr_value:.1f}%)</span>'
+    else:
+        peak_status_display = '<span style="color:green;">通过</span>'
+
+    last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
+    interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
+    interval_ok = interval_days >= MIN_PURCHASE_INTERVAL
+    interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (还需等待 {max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)</span>'
+
+    base_req_met = condition_scores >= 4 # 这个要在 block_reasons 之前计算
+    block_reasons = []
+    # 注意：不再将"核心条件不足"加入 block_reasons，因为它会在结论中单独处理
+    # if not base_req_met: block_reasons.append(f"核心条件不足({condition_scores}/6)") 
+    if not interval_ok: block_reasons.append(f"采购间隔限制(还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)")
+    if not peak_filter_passed: block_reasons.append("价格形态不利")
+    if atr_overbought: block_reasons.append(f"ATR通道超买({atr_value:.1f}%)")
+
+    current_conditions_met = {f'cond{i}': current.get(f'core_cond{i}_met', False) for i in range(1, 7)}
+
+    # 准备最终的 analysis_data 字典，加入新的描述字段
     analysis_data = {
         'current_date': current['日期'],
         'signal': current['采购信号'],
-        'signal_strength': "", # 初始化信号强度描述
+        'signal_strength': signal_strength, 
         'condition_scores': condition_scores,
-        'current_conditions_met': {f'cond{i}': current.get(f'core_cond{i}_met', False) for i in range(1, 7)},
+        'current_conditions_met': current_conditions_met,
         'indicator': indicator,
         'threshold': threshold,
-        'indicator_threshold_diff': threshold - indicator, # 新增：指标与阈值差距
+        'indicator_threshold_diff': indicator_threshold_diff, 
+        'indicator_diff_desc': indicator_diff_desc, # 新增
         'rsi': rsi,
-        'rsi_oversold_diff': 45 - rsi, # 新增：RSI与45差距
+        'rsi_oversold_diff': rsi_oversold_diff, 
+        'rsi_diff_desc': rsi_diff_desc, # 新增
         'price': price,
         'ema21': ema21,
-        'lower_band_ref': lower_band * 1.05, # 布林下轨参考值
+        'lower_band_ref': lower_band * 1.05, 
         'ema_ratio': ema_ratio,
         'dynamic_ema_threshold': dynamic_threshold,
         'volatility': volatility,
@@ -676,9 +746,7 @@ def generate_report(df):
         'interval_check_text': interval_check_text,
         'min_purchase_interval': MIN_PURCHASE_INTERVAL,
         'base_req_met': base_req_met,
-        'block_reasons': block_reasons,
-        # 移除 conditions_explanation, 因为我们不再列表显示
-        # 'conditions_explanation': CONDITION_EXPLANATIONS['core'], 
+        'block_reasons': block_reasons, # 现在只包含明确的阻断原因
     }
 
     # 返回包含报告内容和增强后分析数据的字典
