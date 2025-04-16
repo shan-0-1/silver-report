@@ -656,21 +656,35 @@ def generate_report(df):
     analysis_data = {
         'current_date': current['日期'],
         'signal': current['采购信号'],
+        'signal_strength': "", # 初始化信号强度描述
         'condition_scores': condition_scores,
-        'conditions_explanation': CONDITION_EXPLANATIONS['core'], # 传递解释文本
         'current_conditions_met': {f'cond{i}': current.get(f'core_cond{i}_met', False) for i in range(1, 7)},
+        'indicator': indicator,
+        'threshold': threshold,
+        'indicator_threshold_diff': threshold - indicator, # 新增：指标与阈值差距
+        'rsi': rsi,
+        'rsi_oversold_diff': 45 - rsi, # 新增：RSI与45差距
+        'price': price,
+        'ema21': ema21,
+        'lower_band_ref': lower_band * 1.05, # 布林下轨参考值
+        'ema_ratio': ema_ratio,
+        'dynamic_ema_threshold': dynamic_threshold,
+        'volatility': volatility,
+        'vol_threshold': vol_threshold,
         'peak_status_display': peak_status_display,
         'interval_days': interval_days,
         'interval_check_text': interval_check_text,
         'min_purchase_interval': MIN_PURCHASE_INTERVAL,
         'base_req_met': base_req_met,
-        'block_reasons': block_reasons
+        'block_reasons': block_reasons,
+        # 移除 conditions_explanation, 因为我们不再列表显示
+        # 'conditions_explanation': CONDITION_EXPLANATIONS['core'], 
     }
 
-    # 返回包含报告内容和分析数据的字典
+    # 返回包含报告内容和增强后分析数据的字典
     return {
-        'report_content': report_html,
-        'analysis_data': analysis_data
+        'report_content': report_html, 
+        'analysis_data': analysis_data 
     }
 
 def create_visualization(df):
@@ -851,7 +865,65 @@ if __name__ == "__main__":
         print(f"错误：将 Plotly 图表转换为 HTML 时失败: {e}")
         chart_html_div = "<p style='color:red;'>图表生成失败。</p>"
 
-    # 6. 构建完整的 HTML 页面 (使用提取的 analysis_data)
+    # 6. 构建完整的 HTML 页面
+    
+    # --- 6.1 预先构建动态"今日解读"部分的 HTML --- 
+    today_interpretation_html = f'''
+        <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data['current_date'].strftime('%Y-%m-%d')}) 的解读：</h3>
+        <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购 ({})</span>'.format(analysis_data['signal_strength']) if analysis_data['signal'] else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
+        <p><strong>原因分析：</strong></p>
+        <ul>
+            <li>核心条件满足情况：<strong>{analysis_data['condition_scores']} / 6</strong> (要求≥4)。</li>
+            <li>信号阻断检查：价格形态/ATR过滤为 {analysis_data['peak_status_display']}；采购间隔检查为 {analysis_data['interval_check_text']}。</li>
+    '''
+
+    if analysis_data['signal']:
+        today_interpretation_html += f'''<li>关键指标状态：
+                <ul>
+                    <li>核心工业指标 ({analysis_data['indicator']:.2f}) 低于阈值 ({analysis_data['threshold']:.2f}) 达 <strong>{analysis_data['indicator_threshold_diff']:.2f}</strong>。</li>
+                    <li>修正RSI ({analysis_data['rsi']:.1f}) 低于45达 <strong>{analysis_data['rsi_oversold_diff']:.1f}</strong>，进入超卖区域。</li>
+                    {'<li>其他条件也支持买入信号。</li>' if analysis_data['condition_scores'] > 4 else ''}
+                </ul>
+            </li>
+            <li><strong>结论：</strong><span style="color:green;">关键指标进入有利区域，满足了 {analysis_data['condition_scores']} 项核心条件，且无信号阻断，策略生成 <strong>{analysis_data['signal_strength']}</strong> 的采购建议。</span></li>
+        '''
+    else: # 如果是观望
+        # 先构建指标状态列表
+        indicator_status_list = ''
+        if not analysis_data['current_conditions_met']['cond1']:
+            indicator_status_list += f'<li>核心工业指标 ({analysis_data['indicator']:.2f}) 高于阈值 ({analysis_data['threshold']:.2f}) 达 {abs(analysis_data['indicator_threshold_diff']):.2f}。</li>'
+        if not analysis_data['current_conditions_met']['cond2']:
+             indicator_status_list += f'<li>修正RSI ({analysis_data['rsi']:.1f}) 高于45达 {abs(analysis_data['rsi_oversold_diff']):.1f}。</li>'
+        if not analysis_data['current_conditions_met']['cond3']:
+            indicator_status_list += f'<li>价格({analysis_data['price']:.2f})高于EMA21({analysis_data['ema21']:.2f})。</li>'
+        if not analysis_data['current_conditions_met']['cond4']:
+            indicator_status_list += f'<li>价格({analysis_data['price']:.2f})高于布林下轨参考({analysis_data['lower_band_ref']:.2f})。</li>'
+        if not analysis_data['current_conditions_met']['cond5']:
+            indicator_status_list += f'<li>EMA比率({analysis_data['ema_ratio']:.3f})未达动态阈值({analysis_data['dynamic_ema_threshold']:.3f})。</li>'
+        if not analysis_data['current_conditions_met']['cond6']:
+            indicator_status_list += f'<li>波动性({analysis_data['volatility']:.3f})高于阈值({analysis_data['vol_threshold']:.3f})。</li>'
+        
+        if not indicator_status_list: # 如果所有条件都满足但仍然观望，说明是阻断
+             indicator_status_list = "<li>所有核心指标均处于有利区域，但存在信号阻断。</li>"
+             
+        today_interpretation_html += f'<li>未能满足买入的关键指标状态：<ul>{indicator_status_list}</ul></li>'
+        
+        # 构建结论文本
+        blocking_issues = [r for r in analysis_data['block_reasons'] if not r.startswith('核心条件不足')]
+        conclusion_text = ''
+        if blocking_issues:
+            conclusion_text = '信号被明确阻断：' + '； '.join(blocking_issues) + '。'
+        elif not analysis_data['base_req_met']:
+             conclusion_text = f"核心买入条件满足数量不足 ({analysis_data['condition_scores']}/6)。"
+        else: 
+            conclusion_text = f"核心条件已满足 ({analysis_data['condition_scores']}/6)，但存在未知阻断因素。"
+            
+        today_interpretation_html += f'<li><strong>结论：</strong><span style="color:red;">{conclusion_text} 因此策略建议持币观望。</span></li>'
+
+    today_interpretation_html += '</ul>' # 闭合原因分析的 <ul>
+    # --- 6.1 结束预构建 --- 
+    
+    # --- 6.2 构建最终 HTML，插入预构建的部分 --- 
     final_html = f"""
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -865,35 +937,10 @@ if __name__ == "__main__":
         .report-content {{ margin-bottom: 30px; padding: 15px; border: 1px solid #eee; box-shadow: 2px 2px 5px rgba(0,0,0,0.1); }}
         .chart-container {{ border: 1px solid #eee; box-shadow: 2px 2px 5px rgba(0,0,0,0.1); padding: 10px; }}
         h2, h3 {{ color: #333; }}
-        /* 修改：为带有 title 属性的元素添加更醒目的悬停样式 */
-        [title] {{
-            border-bottom: 1px dotted #bbb; /* 始终显示浅色虚线下划线作为提示 */
-            cursor: help; /* 鼠标悬停时显示问号光标 */
-            position: relative; /* 为伪元素定位提供基础 */
-        }}
-        [title]:hover::after {{ /* 鼠标悬停时显示 tooltip */
-            content: attr(title); /* 显示 title 属性的内容 */
-            position: absolute;
-            left: 50%;
-            transform: translateX(-50%);
-            bottom: 125%; /* 出现在元素上方 */
-            white-space: pre-wrap; /* 允许换行 */
-            background-color: rgba(0, 0, 0, 0.8);
-            color: #fff;
-            padding: 5px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-            z-index: 10;
-            width: max-content; /* 宽度根据内容调整 */
-            max-width: 250px; /* 限制最大宽度 */
-        }}
-        .legend text {{ /* Plotly 图例文字样式 */
-            font-size: 11px !important; /* 可根据需要调整大小 */
-        }}
-         .annotation-text {{ /* Plotly 阈值线注释文本 */
-            font-size: 10px !important; /* 调小字体 */
-         }}
-
+        [title] {{ border-bottom: 1px dotted #bbb; cursor: help; position: relative; }}
+        [title]:hover::after {{ content: attr(title); position: absolute; left: 50%; transform: translateX(-50%); bottom: 125%; white-space: pre-wrap; background-color: rgba(0, 0, 0, 0.8); color: #fff; padding: 5px 10px; border-radius: 4px; font-size: 12px; z-index: 10; width: max-content; max-width: 250px; }}
+        .legend text {{ font-size: 11px !important; }}
+        .annotation-text {{ font-size: 10px !important; }}
     </style>
 </head>
 <body>
@@ -903,7 +950,6 @@ if __name__ == "__main__":
 
         <div class="report-content">
             <h2>📈 关键指标与最新信号</h2>
-            <!-- 使用 generate_report 返回的基础报告内容 -->
             {report_html_content}
         </div>
 
@@ -913,28 +959,26 @@ if __name__ == "__main__":
             {chart_html_div}
         </div>
 
-        <!-- 修改：进一步精简和重构说明，移除重复信息和免责声明 -->
         <div class="report-content" style="margin-top: 30px;">
             <h2>📖 图表与策略逻辑解读</h2>
-
             <h3>图表元素解析</h3>
             <ul>
                  <li><strong>上图 (价格与信号):</strong>
                     <ul>
-                        <li><u>价格线 (深蓝)</u>: 每日收盘价。
-                        <li><u>短期均线 (橙虚线) / EMA线 (红/绿细线)</u>: 不同计算方式的近期价格平均水平，用于观察短期趋势。
-                        <li><u>采购信号 (▲ 红三角)</u>: 当策略的所有买入条件满足时出现此标记。
+                        <li><u>价格线 (深蓝)</u>: 每日收盘价。</li>
+                        <li><u>短期均线 (橙虚线) / EMA线 (红/绿细线)</u>: 不同计算方式的近期价格平均水平，用于观察短期趋势。</li>
+                        <li><u>采购信号 (▲ 红三角)</u>: 当策略的所有买入条件满足时出现此标记。</li>
                     </ul>
                 </li>
                 <li><strong>中图 (策略核心指标):</strong>
                     <ul>
-                        <li><u>核心工业指标 (蓝色实线)</u>: 综合价格相对均值偏离度和市场波动性的指标。策略倾向于在该指标较低时寻找机会。
-                        <li><u>阈值线 (红色虚线等)</u>: 基于近期指标分布计算的动态参考线。核心指标低于关键阈值线（红色）是策略的主要买入条件之一。
+                        <li><u>核心工业指标 (蓝色实线)</u>: 综合价格相对均值偏离度和市场波动性的指标。策略倾向于在该指标较低时寻找机会。</li>
+                        <li><u>阈值线 (红色虚线等)</u>: 基于近期指标分布计算的动态参考线。核心指标低于关键阈值线（红色）是策略的主要买入条件之一。</li>
                     </ul>
                 </li>
                 <li><strong>下图 (市场动量指标 - RSI):</strong>
                     <ul>
-                        <li><u>修正RSI (紫色实线)</u>: 衡量市场近期买卖强度的指标。策略关注其是否进入超卖区域（例如低于45），作为另一个关键买入条件。
+                        <li><u>修正RSI (紫色实线)</u>: 衡量市场近期买卖强度的指标。策略关注其是否进入超卖区域（例如低于45），作为另一个关键买入条件。</li>
                     </ul>
                 </li>
             </ul>
@@ -945,25 +989,8 @@ if __name__ == "__main__":
                 <li><strong>无信号阻断：</strong>排除近期不利价格形态、ATR超买以及过于频繁的信号（需满足最小间隔天数，当前为{analysis_data['min_purchase_interval']}天）。</li>
             </ol>
 
-            <!-- 动态解读部分保持不变 -->
-            <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data['current_date'].strftime('%Y-%m-%d')}) 的解读：</h3>
-            <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购</span>' if analysis_data['signal'] else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
-            <p><strong>原因分析：</strong></p>
-            <ul>
-                <li>今天共满足了 <strong>{analysis_data['condition_scores']}</strong> 个主要买入条件 (策略要求至少满足 <strong>4</strong> 个)。</li>
-                <li>具体来看：
-                    <ul>
-                        {''.join([f'<li><span style="color:{"green" if analysis_data["current_conditions_met"][f"cond{i}"] else "red"};">{ "✔️" if analysis_data["current_conditions_met"][f"cond{i}"] else "❌"}</span> 条件{i} ({analysis_data["conditions_explanation"][f"cond{i}"][0]}): {analysis_data["conditions_explanation"][f"cond{i}"][1]}</li>' for i in range(1, 7)])}
-                    </ul>
-                </li>
-                <li>信号阻断检查：
-                    <ul>
-                        <li>价格形态/ATR过滤：{analysis_data['peak_status_display']}</li>
-                        <li>采购间隔检查 (要求≥{analysis_data['min_purchase_interval']}天)：距离上次信号 {analysis_data['interval_days']} 天 → {analysis_data['interval_check_text']}</li>
-                    </ul>
-                </li>
-                {'<li><strong>结论：</strong><span style="color:green;">由于满足了足够的买入条件 ({analysis_data["condition_scores"]}/6)，且没有触发阻断信号，因此策略建议采购。</span></li>' if analysis_data['signal'] else f'<li><strong>结论：</strong><span style="color:red;">{(f"由于满足的核心条件数量不足 ({analysis_data['condition_scores']}/6)，" if not analysis_data['base_req_met'] else "") + ("具体阻断原因：" + " + ".join(analysis_data['block_reasons']) if analysis_data['block_reasons'] else "")}因此策略建议持币观望。</span></li>'}
-            </ul>
+            <!-- 插入预先构建好的今日解读 HTML -->
+            {today_interpretation_html}
         </div>
     </div>
 </body>
