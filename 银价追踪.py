@@ -34,8 +34,8 @@ def load_silver_data():
     # --- 修改数据文件路径逻辑 ---
     # 优先尝试从脚本同目录或 _MEIPASS (打包环境) 加载
     possible_paths = [
-        os.path.join(BASE_DIR, 'XAG_USD历史数据.csv'), # 打包环境或脚本同目录
-        r'C:\Users\assistant3\Downloads\XAG_USD历史数据.csv' # 绝对路径作为后备
+        os.path.join(BASE_DIR, 'XAG_CNY历史数据.csv'), # 修改文件名：USD -> CNY
+        r'C:\Users\assistant3\Downloads\XAG_CNY历史数据.csv' # 修改文件名：USD -> CNY
     ]
 
     csv_path = None
@@ -46,7 +46,7 @@ def load_silver_data():
             break
 
     if csv_path is None:
-         print(f"错误：在以下位置均未找到 'XAG_USD历史数据.csv':")
+         print(f"错误：在以下位置均未找到 'XAG_CNY历史数据.csv':")
          for p in possible_paths:
              print(f"- {p}")
          exit()
