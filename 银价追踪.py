@@ -937,56 +937,56 @@ if __name__ == "__main__":
     
     # --- 6.1 预先构建动态"今日解读"部分的 HTML --- 
     today_interpretation_html = f'''
-        <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data['current_date'].strftime('%Y-%m-%d')}) 的解读：</h3>
+        <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data['current_date'].strftime('%Y-%m-%d')}) 的策略信号解读：</h3>
         <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购 ({})</span>'.format(analysis_data['signal_strength']) if analysis_data['signal'] else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
-        <p><strong>原因分析：</strong></p>
+        <p><strong>分析概要：</strong></p>
         <ul>
-            <li>核心条件满足情况：<strong>{analysis_data['condition_scores']} / 6</strong> (要求≥4)。</li>
-            <li>信号阻断检查：价格形态/ATR过滤为 {analysis_data['peak_status_display']}；采购间隔检查为 {analysis_data['interval_check_text']}。</li>
+            <li>核心条件满足数量：<strong>{analysis_data['condition_scores']} / 6</strong> (策略要求至少满足 4 项)。</li>
+            <li>信号阻断检查：{analysis_data['peak_status_display']} 且 {analysis_data['interval_check_text']}。</li>
     '''
 
     if analysis_data['signal']:
         today_interpretation_html += f'''<li>关键指标状态：
                 <ul>
-                    <li>核心工业指标 ({analysis_data['indicator']:.2f}) 低于阈值 ({analysis_data['threshold']:.2f}) 达 <strong>{analysis_data['indicator_threshold_diff']:.2f}</strong>。</li>
-                    <li>修正RSI ({analysis_data['rsi']:.1f}) 低于45达 <strong>{analysis_data['rsi_oversold_diff']:.1f}</strong>，进入超卖区域。</li>
-                    {'<li>其他条件也支持买入信号。</li>' if analysis_data['condition_scores'] > 4 else ''}
+                    <li>核心工业指标: {analysis_data['indicator_diff_desc']}。</li>
+                    <li>市场动量 (RSI): {analysis_data['rsi_diff_desc']}。</li>
+                    {'<li>其余 {} 项辅助条件也满足要求。</li>'.format(analysis_data['condition_scores'] - 2) if analysis_data['condition_scores'] > 2 else ''}
                 </ul>
             </li>
-            <li><strong>结论：</strong><span style="color:green;">关键指标进入有利区域，满足了 {analysis_data['condition_scores']} 项核心条件，且无信号阻断，策略生成 <strong>{analysis_data['signal_strength']}</strong> 的采购建议。</span></li>
+            <li><strong>结论：</strong><span style="color:green;">由于关键买入指标进入策略目标区域，满足了 {analysis_data['condition_scores']} 项核心条件，并且无明确的信号阻断因素，策略判定当前形成 <strong>{analysis_data['signal_strength']}</strong> 的采购信号。</span></li>
         '''
     else: # 如果是观望
-        # 先构建指标状态列表
-        indicator_status_list = ''
+        # 构建未满足条件的列表
+        unmet_conditions_list = ''
         if not analysis_data['current_conditions_met']['cond1']:
-            indicator_status_list += f'<li>核心工业指标 ({analysis_data['indicator']:.2f}) 高于阈值 ({analysis_data['threshold']:.2f}) 达 {abs(analysis_data['indicator_threshold_diff']):.2f}。</li>'
+            unmet_conditions_list += f'<li>核心工业指标: {analysis_data["indicator_diff_desc"]}.</li>'
         if not analysis_data['current_conditions_met']['cond2']:
-             indicator_status_list += f'<li>修正RSI ({analysis_data['rsi']:.1f}) 高于45达 {abs(analysis_data['rsi_oversold_diff']):.1f}。</li>'
+             unmet_conditions_list += f'<li>市场动量 (RSI): {analysis_data["rsi_diff_desc"]}.</li>'
         if not analysis_data['current_conditions_met']['cond3']:
-            indicator_status_list += f'<li>价格({analysis_data['price']:.2f})高于EMA21({analysis_data['ema21']:.2f})。</li>'
+            unmet_conditions_list += f'<li>价格({analysis_data["price"]:.2f}) 未低于 EMA21({analysis_data["ema21"]:.2f}).</li>'
         if not analysis_data['current_conditions_met']['cond4']:
-            indicator_status_list += f'<li>价格({analysis_data['price']:.2f})高于布林下轨参考({analysis_data['lower_band_ref']:.2f})。</li>'
+            unmet_conditions_list += f'<li>价格({analysis_data["price"]:.2f}) 未低于布林下轨参考({analysis_data["lower_band_ref"]:.2f}).</li>'
         if not analysis_data['current_conditions_met']['cond5']:
-            indicator_status_list += f'<li>EMA比率({analysis_data['ema_ratio']:.3f})未达动态阈值({analysis_data['dynamic_ema_threshold']:.3f})。</li>'
+            unmet_conditions_list += f'<li>EMA比率({analysis_data["ema_ratio"]:.3f}) 未达动态阈值({analysis_data["dynamic_ema_threshold"]:.3f}).</li>'
         if not analysis_data['current_conditions_met']['cond6']:
-            indicator_status_list += f'<li>波动性({analysis_data['volatility']:.3f})高于阈值({analysis_data['vol_threshold']:.3f})。</li>'
+            unmet_conditions_list += f'<li>波动性({analysis_data["volatility"]:.3f}) 高于动态阈值({analysis_data["vol_threshold"]:.3f}).</li>'
         
-        if not indicator_status_list: # 如果所有条件都满足但仍然观望，说明是阻断
-             indicator_status_list = "<li>所有核心指标均处于有利区域，但存在信号阻断。</li>"
+        if not unmet_conditions_list: # 如果所有条件都满足但仍然观望，说明是阻断
+             unmet_conditions_list = "<li>所有核心条件均满足，观望是由于信号阻断规则。</li>"
              
-        today_interpretation_html += f'<li>未能满足买入的关键指标状态：<ul>{indicator_status_list}</ul></li>'
+        today_interpretation_html += f'<li>当前未能满足买入要求的主要条件：<ul>{unmet_conditions_list}</ul></li>'
         
         # 构建结论文本
-        blocking_issues = [r for r in analysis_data['block_reasons'] if not r.startswith('核心条件不足')]
+        blocking_issues = analysis_data['block_reasons'] # 现在只包含明确阻断原因
         conclusion_text = ''
         if blocking_issues:
-            conclusion_text = '信号被明确阻断：' + '； '.join(blocking_issues) + '。'
+            conclusion_text = '信号因以下规则被阻断：' + '； '.join(blocking_issues) + '。'
         elif not analysis_data['base_req_met']:
-             conclusion_text = f"核心买入条件满足数量不足 ({analysis_data['condition_scores']}/6)。"
+             conclusion_text = f"由于仅满足 {analysis_data['condition_scores']}/6 项核心条件，未能达到策略要求的最低数量。"
         else: 
-            conclusion_text = f"核心条件已满足 ({analysis_data['condition_scores']}/6)，但存在未知阻断因素。"
+            conclusion_text = f"虽满足 {analysis_data['condition_scores']}/6 项核心条件，但可能存在其他未明确的阻断因素。"
             
-        today_interpretation_html += f'<li><strong>结论：</strong><span style="color:red;">{conclusion_text} 因此策略建议持币观望。</span></li>'
+        today_interpretation_html += f'<li><strong>结论：</strong><span style="color:red;">{conclusion_text} 因此，策略建议暂时持币观望。</span></li>'
 
     today_interpretation_html += '</ul>' # 闭合原因分析的 <ul>
     # --- 6.1 结束预构建 --- 
@@ -1066,7 +1066,7 @@ if __name__ == "__main__":
 """
 
     # 7. 将完整的 HTML 写入文件
-    output_filename = "index.html" # 修改输出文件名为 index.html
+    output_filename = "index.html" # 确认输出文件名是 index.html
     try:
         with open(output_filename, 'w', encoding='utf-8') as f:
             f.write(final_html)
@@ -1096,7 +1096,7 @@ if __name__ == "__main__":
                 if result.stdout:
                     print(f"Git 输出:\n{result.stdout.strip()}")
                 if result.stderr:
-                    # 忽略常见的 "nothing to commit" 和 "up-to-date"，因为我们总是尝试提交和推送
+                    # 忽略常见的 \"nothing to commit\" 和 \"up-to-date\"，因为我们总是尝试提交和推送
                     if "nothing to commit" not in result.stderr and "up-to-date" not in result.stderr:
                          print(f"Git 错误:\n{result.stderr.strip()}")
                     else:
