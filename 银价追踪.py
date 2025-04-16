@@ -879,51 +879,11 @@ if __name__ == "__main__":
 """
 
     # 7. 将完整的 HTML 写入文件
-    output_filename = "plotly_result.html"
+    output_filename = "index.html" # 修改输出文件名为 index.html
     try:
         with open(output_filename, 'w', encoding='utf-8') as f:
             f.write(final_html)
         print(f"成功将报告写入文件: {output_filename}")
-
-        # 8. 自动执行 Git 命令推送到 GitHub
-        print("尝试将更新推送到 GitHub...")
-        try:
-            # 定义 Git 命令
-            commit_message = f"Update report - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            git_commands = [
-                ["git", "add", output_filename, ".gitignore", "银价追踪.py"], # 添加报告、忽略文件和脚本本身
-                ["git", "commit", "-m", commit_message],
-                ["git", "push", "origin", "master"] # 推送到 origin 的 master 分支
-            ]
-
-            for cmd in git_commands:
-                print(f"执行命令: {' '.join(cmd)}")
-                # 使用 capture_output=True 捕获输出, text=True 转为字符串
-                # check=False 不会在出错时抛出异常，我们手动检查返回值
-                result = subprocess.run(cmd, capture_output=True, text=True, check=False, encoding='utf-8') # 指定utf-8编码
-
-                # 打印标准输出和标准错误
-                if result.stdout:
-                    print(f"Git 输出:\n{result.stdout.strip()}")
-                if result.stderr:
-                    # 忽略常见的 "nothing to commit"，因为我们总是尝试提交
-                    if "nothing to commit" not in result.stderr and "up-to-date" not in result.stderr:
-                         print(f"Git 错误:\n{result.stderr.strip()}")
-                    else:
-                        print(f"Git 信息 (可忽略): {result.stderr.strip()}")
-
-                # 如果命令失败（非 0 返回码），且不是 "nothing to commit"，则停止后续命令
-                if result.returncode != 0 and "nothing to commit" not in result.stderr:
-                    print(f"Git 命令执行失败，返回码: {result.returncode}。停止推送。")
-                    break # 遇到真实错误则停止
-            else:
-                 print("GitHub 推送操作序列完成（或无事可做）。")
-
-        except FileNotFoundError:
-            print("错误：找不到 'git' 命令。请确保 Git 已安装并添加到系统 PATH。")
-        except Exception as git_e:
-            print(f"错误：执行 Git 命令时出错: {git_e}")
-
     except Exception as e:
         print(f"错误：写入 HTML 文件失败: {e}")
 
