@@ -862,15 +862,81 @@ if __name__ == "__main__":
         </div>
 
         <div class="report-content" style="margin-top: 30px;">
-            <h2>📖 图表解读与策略说明</h2>
-            <p>这个分析旨在提供基于历史数据的定投参考，<strong>不构成投资建议</strong>。</p>
+            <h2>📖 图表解读与策略说明 (小白友好版)</h2>
+            <p><strong>请注意：</strong>以下所有内容均基于本程序设定的量化策略自动生成，是对历史数据分析的参考展示，<strong>绝对不构成任何投资建议</strong>！市场有风险，投资需谨慎，请务必结合您自身的判断和风险承受能力做决策。</p>
+
+            <h3>图表怎么看？</h3>
+            <p>我们主要看三个图：</p>
             <ul>
-                <li><strong>上图 (价格与信号):</strong> 显示每日收盘价、短期均线和关键的EMA趋势线。红色向上的三角形 <span style="color:red; font-size: 1.2em;">▲</span> 标记了基于综合策略计算出的建议<strong>买入信号</strong>出现的位置。关注信号是否伴随着较低的价格水平或趋势转折点。</li>
-                <li><strong>中图 (策略指标):</strong> 蓝色实线是"核心工业指标"，它综合了价格相对均线的偏离度和近期波动性。指标越低，潜在的买入价值可能越高。红色虚线是"中期阈值"，作为主要的买入警戒线。当蓝色实线<strong>低于</strong>红色虚线时（进入淡绿色填充区域），表明满足了第一个买入条件。橙色点线和紫色点划线分别代表短期和长期阈值，用于观察指标的相对位置。灰色点线是指标值为1的基准线。</li>
-                <li><strong>下图 (动量指标):</strong> 紫色实线是"修正RSI"，衡量市场的相对强弱。橙色虚线是动态计算的RSI阈值。当紫色RSI线<strong>低于</strong>45（红色点线）时，通常被认为是超卖区域，满足了第二个买入条件。</li>
-                <li><strong>策略核心:</strong> 只有当<strong>工业指标低于其中期阈值</strong> <u>并且</u> <strong>RSI低于45</strong> 这两个条件<strong>同时满足</strong>时，才会生成最终的采购信号。信号生成后会有最短间隔限制（默认为7天），避免过于频繁的操作。动态窗口的调整旨在适应市场的不同波动状态。</li>
+                <li><strong>上图 (价格与信号):</strong>
+                    <ul>
+                        <li><strong>深蓝色线 (价格):</strong> 这就是每天的白银收盘价格，是我们最关心的基础数据。</li>
+                        <li><strong>橙色虚线 (短期均线):</strong> 可以理解为最近一段时间价格的"平均成本线"。价格在线上方，说明短期看涨的人多；价格在线下方，说明短期看跌的人多。</li>
+                        <li><strong>红色/绿色细线 (EMA):</strong> 这是另一种"平均成本线"，但更看重最近几天的价格。它们帮助判断短期趋势的强度和方向。</li>
+                        <li><strong><span style="color:red; font-size: 1.2em;">▲</span> 红色三角 (采购信号):</strong> 这是最重要的！当这个标记出现时，表示策略根据下面两个图的分析，认为**可能**是一个不错的买入时机。<strong>但信号出现不代表一定要买！</strong></li>
+                    </ul>
+                </li>
+                <li><strong>中图 (策略核心指标):</strong>
+                    <ul>
+                        <li><strong>蓝色实线 (核心工业指标):</strong> 这是策略的"独门秘方"指标，综合了当前价格与平均成本的偏离程度，以及最近市场的"冷静"程度。简单说，这个值越低，策略认为价格越可能被低估。</li>
+                        <li><strong>红色虚线 (中期阈值 - 警戒线):</strong> 这是策略给"核心指标"画的一条线。当蓝色实线**低于**这条红色虚线时（进入淡绿色区域），策略就认为满足了第一个关键的买入条件。</li>
+                        <li><strong>其他虚线 (短/长期阈值):</strong> 帮助我们观察蓝色指标线在不同时间尺度下的相对位置。</li>
+                        <li><strong>灰色点线 (基准=1):</strong> "核心指标"等于1时是中性状态，低于1通常更好。</li>
+                    </ul>
+                </li>
+                <li><strong>下图 (市场情绪指标 - RSI):</strong>
+                    <ul>
+                        <li><strong>紫色实线 (修正RSI):</strong> 这个指标衡量市场的"买卖热情"。当它低于某个数值（比如图中的红色点线45），通常表示市场可能"卖得有点过头了"(超卖)，价格短期内反弹的可能性增大。</li>
+                        <li><strong>橙色虚线 (动态RSI阈值):</strong> 这是策略动态计算的RSI参考线。</li>
+                        <li><strong>红色点线 (超卖参考线=45):</strong> 这是策略设定的一个固定参考线。当紫色RSI线**低于**这条线时，策略认为满足了第二个关键的买入条件。</li>
+                    </ul>
+                </li>
             </ul>
-             <p>请结合自身风险承受能力和市场判断进行决策。</p>
+
+            <h3>策略是怎么决定买不买的？</h3>
+            <p>这个策略比较保守，需要同时满足多个条件才会发出 <span style="color:red; font-size: 1.2em;">▲</span> 采购信号：</p>
+            <ol>
+                <li><strong>主要条件（至少满足4个）：</strong>
+                    <ul>
+                        <li>① 中图的蓝色线低于红色警戒线？ (核心指标 < 阈值)</li>
+                        <li>② 下图的紫色线低于45？ (RSI < 45)</li>
+                        <li>③ 当前价格低于某个短期平均成本线(EMA21)？</li>
+                        <li>④ 当前价格接近或低于布林通道下轨（另一个衡量价格波动范围的指标）？</li>
+                        <li>⑤ 短期趋势动能(EMA比率)是否足够强？</li>
+                        <li>⑥ 市场波动性(动量因子)是否足够低（市场比较"冷静"）？</li>
+                    </ul>
+                </li>
+                <li><strong>并且没有"阻断"信号：</strong>即使满足了4个以上主要条件，如果出现以下情况，策略也会阻止发出信号：
+                    <ul>
+                        <li>短期内价格形态不利（比如冲高后快速回落）。</li>
+                        <li>价格处于ATR波动通道的超买区域。</li>
+                        <li>距离上次发出信号的时间太短（默认为1天，由 `MIN_PURCHASE_INTERVAL` 控制）。</li>
+                    </ul>
+                </li>
+            </ol>
+            <p><strong>只有同时满足"主要条件达标"和"无阻断信号"时，策略才会建议买入。</strong> 动态调整的窗口期是为了让策略在市场长期横盘后变得更灵敏。</p>
+
+            <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({current['日期'].strftime('%Y-%m-%d')}) 的解读：</h3>
+            <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购</span>' if current['采购信号'] else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
+            {f'''
+            <p><strong>原因分析：</strong></p>
+            <ul>
+                <li>今天共满足了 <strong>{condition_scores}</strong> 个主要买入条件 (策略要求至少满足 <strong>4</strong> 个)。</li>
+                <li>具体来看：
+                    <ul>
+                        {''.join([f'<li><span style="color:{"green" if current.get(f"core_cond{i}_met", False) else "red"};">{ "✔️" if current.get(f"core_cond{i}_met", False) else "❌"}</span> 条件{i} ({CONDITION_EXPLANATIONS["core"][f"cond{i}"][0]}): {CONDITION_EXPLANATIONS["core"][f"cond{i}"][1]}</li>' for i in range(1, 7)])}
+                    </ul>
+                </li>
+                <li>信号阻断检查：
+                    <ul>
+                        <li>价格形态/ATR过滤：{peak_status_text}</li>
+                        <li>采购间隔检查 (要求≥{MIN_PURCHASE_INTERVAL}天)：距离上次信号 {interval_days} 天 → {interval_check_text}</li>
+                    </ul>
+                </li>
+                {'<li><strong>结论：</strong><span style="color:green;">由于满足了足够的买入条件 ({condition_scores}/6)，且没有触发阻断信号，因此策略建议采购。</span></li>' if current['采购信号'] else f'<li><strong>结论：</strong><span style="color:red;">{("由于满足的核心条件数量不足 (" + str(condition_scores) + "/6)，" if not base_req_met else "") + ("且存在阻断信号：" + " + ".join(block_reasons) if block_reasons else ("虽然核心条件满足，但存在阻断信号：" + " + ".join(block_reasons)) if block_reasons else ("虽然没有阻断，但核心条件未满足 (" + str(condition_scores) + "/6)。"))}因此策略建议持币观望。</span></li>'}
+            </ul>
+            ''' if 'condition_scores' in locals() and 'CONDITION_EXPLANATIONS' in locals() and 'peak_status_text' in locals() and 'interval_days' in locals() and 'interval_check_text' in locals() and 'base_req_met' in locals() and 'block_reasons' in locals() else "<p>无法生成详细的今日原因分析。</p>"}
+            <p><strong>再次强调：</strong> 这只是策略根据历史数据和设定规则给出的参考，真实市场远比模型复杂。请独立思考，谨慎决策！</p>
         </div>
 
     </div>
