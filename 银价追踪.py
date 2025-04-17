@@ -1078,40 +1078,65 @@ if __name__ == "__main__":
         # 8. 自动执行 Git 命令推送到 GitHub
         print("尝试将更新推送到 GitHub...")
         try:
-            # 定义 Git 命令
+            # 定义 Git 命令 (Add 和 Commit)
             commit_message = f"Update report - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            # 添加 index.html, .gitignore 和脚本本身
             files_to_add = [output_filename, ".gitignore", __file__]
-            git_commands = [
-                ["git", "add"] + files_to_add,
-                ["git", "commit", "-m", commit_message],
-                ["git", "push", "origin", "master"] # 推送到 origin 的 master 分支
-            ]
+            add_cmd = ["git", "add"] + files_to_add
+            commit_cmd = ["git", "commit", "-m", commit_message]
+            push_cmd = ["git", "push", "origin", "master"] # 单独定义 Push 命令
 
-            for cmd in git_commands:
-                print(f"执行命令: {' '.join(cmd)}")
-                # 使用 capture_output=True 捕获输出, text=True 转为字符串
-                # check=False 不会在出错时抛出异常，我们手动检查返回值
-                # 指定 utf-8 编码以防 Windows 默认编码问题
-                result = subprocess.run(cmd, capture_output=True, text=True, check=False, encoding='utf-8')
-
-                # 打印标准输出和标准错误
-                if result.stdout:
-                    print(f"Git 输出:\n{result.stdout.strip()}")
-                if result.stderr:
-                    # 忽略常见的 \"nothing to commit\" 和 \"up-to-date\"，因为我们总是尝试提交和推送
-                    if "nothing to commit" not in result.stderr and "up-to-date" not in result.stderr:
-                         print(f"Git 错误:\n{result.stderr.strip()}")
-                    else:
-                        print(f"Git 信息 (可忽略): {result.stderr.strip()}")
-
-                # 如果命令失败（非 0 返回码），且不是可忽略的信息，则停止后续命令
-                if result.returncode != 0 and ("nothing to commit" not in result.stderr and "up-to-date" not in result.stderr):
-                    print(f"Git 命令执行失败，返回码: {result.returncode}。停止推送。")
-                    break # 遇到真实错误则停止
+            # --- 执行 Add --- 
+            print(f"执行命令: {' '.join(add_cmd)}")
+            add_result = subprocess.run(add_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+            if add_result.stdout: print(f"Git 输出:\n{add_result.stdout.strip()}")
+            if add_result.stderr: print(f"Git 错误:\n{add_result.stderr.strip()}")
+            if add_result.returncode != 0:
+                print(f"Git add 命令执行失败，返回码: {add_result.returncode}。停止。")
             else:
-                 # 如果循环正常结束（没有 break），则打印完成信息
-                 print("GitHub 推送操作序列完成（或无事可做）。")
+                # --- 执行 Commit --- 
+                print(f"执行命令: {' '.join(commit_cmd)}")
+                commit_result = subprocess.run(commit_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+                commit_success = False # 标记 Commit 是否成功
+                if commit_result.stdout: print(f"Git 输出:\n{commit_result.stdout.strip()}")
+                if commit_result.stderr:
+                    if "nothing to commit" in commit_result.stderr:
+                        print(f"Git 信息 (可忽略): {commit_result.stderr.strip()}")
+                        commit_success = True # 没有东西提交也视为一种成功，可以尝试推送
+                    else:
+                         print(f"Git 错误:\n{commit_result.stderr.strip()}")
+                # 检查返回码，如果为0，则认为成功
+                if commit_result.returncode == 0:
+                    commit_success = True
+
+                if not commit_success:
+                    print(f"Git commit 命令执行失败，返回码: {commit_result.returncode}。停止。")
+                else:
+                    # --- 执行 Push (无限重试直到成功) --- 
+                    print(f"尝试推送: {' '.join(push_cmd)}")
+                    while True:
+                        push_result = subprocess.run(push_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+                        push_succeeded = False
+                        push_stderr = push_result.stderr.strip() if push_result.stderr else ""
+
+                        if push_result.stdout: print(f"Git 输出:\n{push_result.stdout.strip()}")
+                        if push_stderr:
+                            # Everything up-to-date 也视为成功
+                            if "Everything up-to-date" in push_stderr or "up-to-date" in push_stderr:
+                                print(f"Git 信息: {push_stderr}")
+                                push_succeeded = True
+                            else:
+                                print(f"Git 错误:\n{push_stderr}")
+                        
+                        # 检查返回码是否为 0
+                        if push_result.returncode == 0:
+                            push_succeeded = True
+
+                        if push_succeeded:
+                            print("推送成功或无需推送。")
+                            break # 跳出无限循环
+                        else:
+                            print(f"推送失败 (返回码: {push_result.returncode})，自动重试...")
+                            # 无需 time.sleep，直接进入下一次循环尝试
 
         except FileNotFoundError:
             print("错误：找不到 'git' 命令。请确保 Git 已安装并添加到系统 PATH。")
