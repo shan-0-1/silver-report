@@ -826,11 +826,12 @@ def create_visualization(df):
     """
     使用 Plotly 生成交互式 HTML 图表，包含三个子图，帮助可视化分析。
     新增功能：鼠标悬停在图表线上时，会显示该线的名称、数值以及简要计算说明。
+    新增功能：在价格图上标记 EMA 金叉和死叉。
     图表解读指南... (保持不变)
     """
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
                         vertical_spacing=0.05,
-                        subplot_titles=('价格与信号 (看红色三角是否出现)',
+                        subplot_titles=('价格与信号 (看红色三角/金叉绿箭/死叉红箭)', # 修改标题
                                         '策略指标分析 (看蓝色线是否低于红色虚线/进入绿色区域)',
                                         '动量指标分析 (看紫色线是否低于红色点线)'))
 
@@ -845,6 +846,9 @@ def create_visualization(df):
     hovertemplate_rsi = "<b>修正RSI</b>: %{y:.1f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 基于14日平均涨跌幅，衡量超买超卖</i><extra></extra>"
     hovertemplate_rsi_threshold = "<b>动态RSI阈值</b>: %{y:.1f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 近63日RSI的30%分位数</i><extra></extra>"
     hovertemplate_fill = "<b>指标低于阈值区域</b><br>日期: %{x|%Y-%m-%d}<br>工业指标: %{y:.2f}<br><i>满足买入条件1</i><extra></extra>"
+    # --- 新增 EMA 交叉悬停模板 ---
+    hovertemplate_golden_cross = "<b>📈 EMA金叉发生</b><br>价格: %{y:.2f} CNY<br>日期: %{x|%Y-%m-%d}<br><i>EMA9 上穿 EMA21</i><extra></extra>"
+    hovertemplate_death_cross = "<b>📉 EMA死叉发生</b><br>价格: %{y:.2f} CNY<br>日期: %{x|%Y-%m-%d}<br><i>EMA9 下穿 EMA21</i><extra></extra>"
 
 
     # --- 行 1: 价格与信号 ---
@@ -852,10 +856,9 @@ def create_visualization(df):
                              line=dict(color='navy', width=1.5), legendgroup='price', legendrank=1,
                              hovertemplate=hovertemplate_price),
                   row=1, col=1)
-    # 注意：为SMA动态短添加 customdata 以便悬停时显示窗口天数
     fig.add_trace(go.Scatter(x=df['日期'], y=df['SMA动态短'], mode='lines', name='短期均线 (近期趋势)',
                              line=dict(color='darkorange', dash='dash'), legendgroup='price', legendrank=2,
-                             customdata=df['动态短窗口'], # 将窗口天数传给 customdata
+                             customdata=df['动态短窗口'],
                              hovertemplate=hovertemplate_sma),
                   row=1, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['EMA9'], mode='lines', name='EMA9 (更短趋势)',
@@ -867,11 +870,36 @@ def create_visualization(df):
                              hovertemplate=hovertemplate_ema),
                   row=1, col=1)
 
+    # --- 添加 EMA 交叉标记 ---
+    if 'EMA金叉' in df.columns and pd.api.types.is_bool_dtype(df['EMA金叉']) and len(df) > 1:
+        # 找到发生交叉的点 (状态改变的点)
+        cross_change = df['EMA金叉'].diff() # True - False = 1 (金叉点), False - True = -1 (死叉点)
+
+        golden_cross_points = df[(cross_change == 1)]
+        death_cross_points = df[(cross_change == -1)]
+
+        if not golden_cross_points.empty:
+             fig.add_trace(go.Scatter(x=golden_cross_points['日期'], y=golden_cross_points['Price'],
+                                      mode='markers', name='📈 EMA金叉',
+                                      marker=dict(color='green', size=7, symbol='arrow-up', line=dict(width=1, color='black')),
+                                      legendgroup='crossover', legendrank=6, # 调整 legendrank
+                                      hovertemplate=hovertemplate_golden_cross),
+                           row=1, col=1)
+
+        if not death_cross_points.empty:
+             fig.add_trace(go.Scatter(x=death_cross_points['日期'], y=death_cross_points['Price'],
+                                      mode='markers', name='📉 EMA死叉',
+                                      marker=dict(color='red', size=7, symbol='arrow-down', line=dict(width=1, color='black')),
+                                      legendgroup='crossover', legendrank=7, # 调整 legendrank
+                                      hovertemplate=hovertemplate_death_cross),
+                           row=1, col=1)
+
+    # --- 保留原始采购信号标记 ---
     signal_df = df[df['采购信号']]
     if not signal_df.empty:
         fig.add_trace(go.Scatter(x=signal_df['日期'], y=signal_df['Price'], mode='markers', name='⭐采购信号⭐',
                                  marker=dict(color='red', size=8, symbol='triangle-up', line=dict(width=1, color='black')),
-                                 legendgroup='signal', legendrank=5,
+                                 legendgroup='signal', legendrank=5, # 确保 legendrank 合理
                                  hovertemplate=hovertemplate_signal),
                       row=1, col=1)
 
