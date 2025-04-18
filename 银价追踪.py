@@ -193,13 +193,20 @@ def calculate_strategy(df):
     df['EMA21'] = df['Price'].ewm(span=21, adjust=False).mean()
     df['EMA50'] = df['Price'].ewm(span=50, adjust=False).mean()
 
+    # --- 新增：直接比较 EMA9 和 EMA21 用于视觉交叉判断 --- 
+    # 填充 EMA 计算初期的 NaN 值，避免比较错误
+    df['EMA9'].fillna(method='bfill', inplace=True)
+    df['EMA21'].fillna(method='bfill', inplace=True)
+    df['ema9_above_ema21'] = df['EMA9'] > df['EMA21']
+    # --- 结束新增 --- 
+
     df['ema_ratio'] = df['EMA9'] / df['EMA21'].replace(0, np.nan) # 避免除以零
     df['ema_ratio'] = df['ema_ratio'].fillna(1.0) # 中性填充
 
-    # 修改EMA金叉条件计算公式
+    # 修改EMA金叉条件计算公式 (此列仍用于 core_cond5)
     df['dynamic_ema_threshold'] = 1 + (0.5 * df['动量因子'])  # 使阈值与波动率正相关
-    df['EMA金叉'] = df['ema_ratio'] > df['dynamic_ema_threshold']
-    # 增加EMA合理性检查
+    df['EMA金叉'] = df['ema_ratio'] > df['dynamic_ema_threshold'] 
+    # 增加EMA合理性检查 (此列仍用于 core_cond5)
     df['EMA金叉'] = df['EMA金叉'] & (df['dynamic_ema_threshold'] < 1.5)
 
     # ==== 新增波动因子动态调整 ====
@@ -506,7 +513,7 @@ def generate_report(df):
         'ema_trend': f"基于EMA9({{ema9_val:.2f}}), EMA21({{ema21_val:.2f}}), EMA50({{ema50_val:.2f}})的相对位置判断短期趋势。当EMA9>EMA21且EMA21>EMA50时为多头，反之为空头。", # 使用占位符
         'final_block': "总结导致最终未能产生买入信号的具体原因。",
         '3day_change': "最近三个交易日的价格变化绝对值和方向。",
-        'ema_crossover': f"基于EMA9和EMA21的交叉状态。金叉(EMA9上穿EMA21)通常视为看涨信号，死叉(EMA9下穿EMA21)通常视为看跌信号。" # 新增EMA交叉解释
+        'ema_crossover': "基于 EMA9 和 EMA21 的直接相对位置。金叉状态 (EMA9 > EMA21) 通常视为看涨倾向，死叉状态 (EMA9 < EMA21) 通常视为看跌倾向。图表上的标记 (↑/↓) 显示精确的交叉点。" # 新增EMA交叉解释
     }
 
     # --- 构建 HTML 报告字符串 ---
@@ -543,6 +550,11 @@ def generate_report(df):
         except Exception as e:
             print(f"警告: 格式化 HOVER_TEXTS['{key}'] 时发生错误: {e}")
 
+    # 重新填充该特定 key
+    try:
+        HOVER_TEXTS['ema_crossover'] = HOVER_TEXTS['ema_crossover'] # 这里只是为了触发可能的 format，如果之前有占位符的话
+    except Exception as e:
+         print(f"警告: 格式化 HOVER_TEXTS['ema_crossover'] 时发生错误: {e}")
 
     report_html = f"""
     <div style="font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: auto; padding: 20px; border: 1px solid #eee; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
@@ -564,35 +576,27 @@ def generate_report(df):
         <h3 title='{HOVER_TEXTS['ema_crossover']}'>📈 短期趋势信号 (EMA交叉)：</h3>
         <ul>
     """
-    # --- 新增EMA交叉状态判断逻辑 ---
-    ema_crossover_status = "无明确交叉"
+    # --- 修改EMA交叉状态判断逻辑 --- 
+    ema_crossover_status = "状态未知"
     ema_crossover_color = "gray"
-    # 检查是否存在 'EMA金叉' 列，并且 DataFrame 不为空
-    if 'EMA金叉' in df.columns and not df.empty:
+    # 检查是否存在 'ema9_above_ema21' 列
+    if 'ema9_above_ema21' in df.columns and not df.empty:
         # 确保该列是布尔类型
-        if pd.api.types.is_bool_dtype(df['EMA金叉']):
-            current_ema_cross = current.get('EMA金叉', None)
-            if current_ema_cross is True:
+        if pd.api.types.is_bool_dtype(df['ema9_above_ema21']):
+            current_ema9_above = current.get('ema9_above_ema21', None)
+            if current_ema9_above is True:
                 ema_crossover_status = "金叉状态 (EMA9 > EMA21，看涨倾向)"
                 ema_crossover_color = "green"
-            elif current_ema_cross is False:
-                 # 需要检查前一天是否为 True 来判断是否刚发生死叉
-                 if len(df) > 1:
-                     prev_ema_cross = df['EMA金叉'].iloc[-2]
-                     if prev_ema_cross is True:
-                          ema_crossover_status = "刚刚发生死叉 (EMA9 < EMA21，看跌倾向)"
-                          ema_crossover_color = "red"
-                     else:
-                          ema_crossover_status = "死叉状态 (EMA9 < EMA21，看跌倾向)"
-                          ema_crossover_color = "orange" # 或者保持红色
-                 else: # 如果只有一行数据
-                     ema_crossover_status = "死叉状态 (EMA9 < EMA21，看跌倾向)"
-                     ema_crossover_color = "orange" # 或 red
-            # 如果 current_ema_cross 是 None (例如因为计算失败或数据不足)
-            # status 保持 "无明确交叉"
+            elif current_ema9_above is False:
+                ema_crossover_status = "死叉状态 (EMA9 < EMA21，看跌倾向)"
+                ema_crossover_color = "red"
+            # 如果 current_ema9_above 是 None (例如因为计算失败或数据不足)
+            # status 保持 "状态未知"
         else:
-            print("警告: 'EMA金叉' 列不是布尔类型，无法判断交叉状态。")
-    # --- 结束EMA交叉状态判断逻辑 ---
+            print("警告: 'ema9_above_ema21' 列不是布尔类型，无法判断交叉状态。")
+    else:
+        print("警告: 缺少 'ema9_above_ema21' 列，无法判断交叉状态。")
+    # --- 结束修改 --- 
 
     report_html += f'<li>当前状态：<strong style="color:{ema_crossover_color};">{ema_crossover_status}</strong></li>'
     report_html += "</ul>"
@@ -872,10 +876,14 @@ def create_visualization(df):
                              hovertemplate=hovertemplate_ema),
                   row=1, col=1)
 
-    # --- 使用 Annotations 添加 EMA 交叉标记 --- 
-    if 'EMA金叉' in df.columns and pd.api.types.is_bool_dtype(df['EMA金叉']) and len(df) > 1:
-        cross_change = df['EMA金叉'].diff()
+    # --- 使用 Annotations 添加 EMA 交叉标记 (修改检测逻辑) --- 
+    # 使用新的 'ema9_above_ema21' 列来检测视觉交叉
+    if 'ema9_above_ema21' in df.columns and pd.api.types.is_bool_dtype(df['ema9_above_ema21']) and len(df) > 1:
+        # 检测 ema9_above_ema21 状态的变化
+        cross_change = df['ema9_above_ema21'].diff()
+        # diff == 1 表示从 False 变为 True (视觉金叉)
         golden_cross_points = df[(cross_change == 1)]
+        # diff == -1 表示从 True 变为 False (视觉死叉)
         death_cross_points = df[(cross_change == -1)]
 
         # 计算一个小的偏移量，让箭头稍微离开价格线
@@ -891,9 +899,10 @@ def create_visualization(df):
                 text="↑", 
                 showarrow=False,
                 font=dict(size=14, color="green"),
-                hovertext=f"<b>📈 EMA金叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
-                hoverlabel=dict(bgcolor="white"), # 悬停标签背景
-                yanchor="top" # 锚点在文字顶部，使其位于y坐标之下
+                # 更新悬停文本，明确是视觉交叉
+                hovertext=f"<b>📈 EMA视觉金叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
+                hoverlabel=dict(bgcolor="white"),
+                yanchor="top"
             )
             
         for i in range(len(death_cross_points)):
@@ -904,23 +913,24 @@ def create_visualization(df):
                 text="↓", 
                 showarrow=False,
                 font=dict(size=14, color="red"),
-                hovertext=f"<b>📉 EMA死叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
+                # 更新悬停文本，明确是视觉交叉
+                hovertext=f"<b>📉 EMA视觉死叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
                 hoverlabel=dict(bgcolor="white"),
-                yanchor="bottom" # 锚点在文字底部，使其位于y坐标之上
+                yanchor="bottom"
             )
-        
+
         # 添加一个不可见的散点轨迹用于图例显示 (Annotations 不会自动加入图例)
         fig.add_trace(go.Scatter(
             x=[None], y=[None], # 没有实际数据点
             mode='markers', 
             marker=dict(color='green', symbol='triangle-up', size=8), # 用三角代替箭头显示
-            name='📈 EMA金叉事件'
+            name='📈 EMA视觉金叉事件'
         ), row=1, col=1)
         fig.add_trace(go.Scatter(
             x=[None], y=[None], 
             mode='markers', 
             marker=dict(color='red', symbol='triangle-down', size=8),
-            name='📉 EMA死叉事件'
+            name='📉 EMA视觉死叉事件'
         ), row=1, col=1)
 
     # --- 保留原始采购信号标记 --- 
