@@ -896,35 +896,38 @@ def create_visualization(df):
         # 计算一个小的偏移量，让箭头稍微离开价格线
         # 使用 Y 轴范围的一个小比例作为偏移量，避免绝对值过大或过小
         y_range = df['Price'].max() - df['Price'].min()
-        offset = y_range * 0.015 # Y轴范围的 1.5% 作为偏移
+        # --- 修改：增大偏移量 ---
+        offset = y_range * 0.035 # Y轴范围的 3.5% 作为偏移
+        # --- 结束修改 ---
 
         # --- 绘制金叉标记 --- 
         for i in range(len(golden_cross_points)):
             point = golden_cross_points.iloc[i]
-            # --- 新增：验证金叉标记点状态 ---
-            if not point['ema9_above_ema21']:
-                print(f"警告: 在日期 {point['日期']:%Y-%m-%d} 尝试标记金叉 (↑)，但实际 EMA9 ({point['EMA9']:.2f}) 不大于 EMA21 ({point['EMA21']:.2f})! Cross Change 值: {cross_change.loc[point.name]}")
-            # --- 结束验证 ---
             fig.add_annotation(
-                x=point['日期'], 
+                x=point['日期'],
                 y=point['Price'] - offset, # 放在价格下方
-                text="↑", 
+                # --- 修改：加粗箭头，增大字号 ---
+                text="<b>↑</b>",
                 showarrow=False,
-                font=dict(size=14, color="green"),
+                font=dict(size=16, color="green"),
+                # --- 结束修改 ---
                 # 更新悬停文本，明确是视觉交叉
                 hovertext=f"<b>📈 EMA视觉金叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
                 hoverlabel=dict(bgcolor="white"),
                 yanchor="top"
             )
-            
+
+        # --- 绘制死叉标记 --- 
         for i in range(len(death_cross_points)):
             point = death_cross_points.iloc[i]
             fig.add_annotation(
-                x=point['日期'], 
+                x=point['日期'],
                 y=point['Price'] + offset, # 放在价格上方
-                text="↓", 
+                 # --- 修改：加粗箭头，增大字号 ---
+                text="<b>↓</b>",
                 showarrow=False,
-                font=dict(size=14, color="red"),
+                font=dict(size=16, color="red"),
+                # --- 结束修改 ---
                 # 更新悬停文本，明确是视觉交叉
                 hovertext=f"<b>📉 EMA视觉死叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
                 hoverlabel=dict(bgcolor="white"),
