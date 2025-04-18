@@ -886,6 +886,11 @@ def create_visualization(df):
         # diff == -1 表示从 True 变为 False (视觉死叉)
         death_cross_points = df[(cross_change == -1)]
 
+        # --- 添加调试打印 ---
+        print(f"检测到的视觉金叉点数量: {len(golden_cross_points)}")
+        print(f"检测到的视觉死叉点数量: {len(death_cross_points)}")
+        # --- 结束调试打印 ---
+
         # 计算一个小的偏移量，让箭头稍微离开价格线
         # 使用 Y 轴范围的一个小比例作为偏移量，避免绝对值过大或过小
         y_range = df['Price'].max() - df['Price'].min()
