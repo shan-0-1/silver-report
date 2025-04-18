@@ -826,17 +826,19 @@ def create_visualization(df):
     """
     使用 Plotly 生成交互式 HTML 图表，包含三个子图，帮助可视化分析。
     新增功能：鼠标悬停在图表线上时，会显示该线的名称、数值以及简要计算说明。
-    新增功能：在价格图上标记 EMA 金叉和死叉。
+    新增功能：在价格图上标记 EMA 金叉 (↑) 和死叉 (↓)。
     图表解读指南... (保持不变)
     """
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
                         vertical_spacing=0.05,
-                        subplot_titles=('价格与信号 (看红色三角/金叉绿箭/死叉红箭)', # 修改标题
-                                        '策略指标分析 (看蓝色线是否低于红色虚线/进入绿色区域)',
-                                        '动量指标分析 (看紫色线是否低于红色点线)'))
+                        subplot_titles=(
+                            # 修改标题以反映新标记
+                            '价格与信号 (看红色三角/金叉绿色↑/死叉红色↓)', 
+                            '策略指标分析 (看蓝色线是否低于红色虚线/进入绿色区域)',
+                            '动量指标分析 (看紫色线是否低于红色点线)'
+                        ))
 
     # --- 定义悬停模板 ---
-    # <extra></extra> 用于移除 Plotly 默认添加的额外信息框
     hovertemplate_price = "<b>价格</b>: %{y:.2f} CNY<br>日期: %{x|%Y-%m-%d}<br><i>来源: 每日收盘价</i><extra></extra>"
     hovertemplate_sma = "<b>%{data.name}</b>: %{y:.2f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 最近%{customdata}天收盘价的算术平均</i><extra></extra>"
     hovertemplate_ema = "<b>%{data.name}</b>: %{y:.2f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 指数移动平均，近期价格权重更高</i><extra></extra>"
@@ -846,135 +848,156 @@ def create_visualization(df):
     hovertemplate_rsi = "<b>修正RSI</b>: %{y:.1f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 基于14日平均涨跌幅，衡量超买超卖</i><extra></extra>"
     hovertemplate_rsi_threshold = "<b>动态RSI阈值</b>: %{y:.1f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 近63日RSI的30%分位数</i><extra></extra>"
     hovertemplate_fill = "<b>指标低于阈值区域</b><br>日期: %{x|%Y-%m-%d}<br>工业指标: %{y:.2f}<br><i>满足买入条件1</i><extra></extra>"
-    # --- 新增 EMA 交叉悬停模板 ---
-    hovertemplate_golden_cross = "<b>📈 EMA金叉发生</b><br>价格: %{y:.2f} CNY<br>日期: %{x|%Y-%m-%d}<br><i>EMA9 上穿 EMA21</i><extra></extra>"
-    hovertemplate_death_cross = "<b>📉 EMA死叉发生</b><br>价格: %{y:.2f} CNY<br>日期: %{x|%Y-%m-%d}<br><i>EMA9 下穿 EMA21</i><extra></extra>"
+    # EMA 交叉的悬停文本将在 annotations 中定义
 
-
-    # --- 行 1: 价格与信号 ---
+    # --- 行 1: 价格与信号 --- 
+    # 移除 legendgroup 使其可单独隐藏
     fig.add_trace(go.Scatter(x=df['日期'], y=df['Price'], mode='lines', name='白银价格 (CNY)',
-                             line=dict(color='navy', width=1.5), legendgroup='price', legendrank=1,
+                             line=dict(color='navy', width=1.5), # legendgroup='price', legendrank=1,
                              hovertemplate=hovertemplate_price),
                   row=1, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['SMA动态短'], mode='lines', name='短期均线 (近期趋势)',
-                             line=dict(color='darkorange', dash='dash'), legendgroup='price', legendrank=2,
+                             line=dict(color='darkorange', dash='dash'), # legendgroup='price', legendrank=2,
                              customdata=df['动态短窗口'],
                              hovertemplate=hovertemplate_sma),
                   row=1, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['EMA9'], mode='lines', name='EMA9 (更短趋势)',
-                             line=dict(color='firebrick', width=1), legendgroup='price', legendrank=3, opacity=0.7,
+                             line=dict(color='firebrick', width=1), # legendgroup='price', legendrank=3, 
+                             opacity=0.7,
                              hovertemplate=hovertemplate_ema),
                   row=1, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['EMA21'], mode='lines', name='EMA21 (中期趋势)',
-                             line=dict(color='seagreen', width=1), legendgroup='price', legendrank=4, opacity=0.7,
+                             line=dict(color='seagreen', width=1), # legendgroup='price', legendrank=4, 
+                             opacity=0.7,
                              hovertemplate=hovertemplate_ema),
                   row=1, col=1)
 
-    # --- 添加 EMA 交叉标记 ---
+    # --- 使用 Annotations 添加 EMA 交叉标记 --- 
     if 'EMA金叉' in df.columns and pd.api.types.is_bool_dtype(df['EMA金叉']) and len(df) > 1:
-        # 找到发生交叉的点 (状态改变的点)
-        cross_change = df['EMA金叉'].diff() # True - False = 1 (金叉点), False - True = -1 (死叉点)
-
+        cross_change = df['EMA金叉'].diff()
         golden_cross_points = df[(cross_change == 1)]
         death_cross_points = df[(cross_change == -1)]
 
-        if not golden_cross_points.empty:
-             fig.add_trace(go.Scatter(x=golden_cross_points['日期'], y=golden_cross_points['Price'],
-                                      mode='markers', name='📈 EMA金叉',
-                                      marker=dict(color='green', size=7, symbol='arrow-up', line=dict(width=1, color='black')),
-                                      legendgroup='crossover', legendrank=6, # 调整 legendrank
-                                      hovertemplate=hovertemplate_golden_cross),
-                           row=1, col=1)
+        # 计算一个小的偏移量，让箭头稍微离开价格线
+        # 使用 Y 轴范围的一个小比例作为偏移量，避免绝对值过大或过小
+        y_range = df['Price'].max() - df['Price'].min()
+        offset = y_range * 0.015 # Y轴范围的 1.5% 作为偏移
 
-        if not death_cross_points.empty:
-             fig.add_trace(go.Scatter(x=death_cross_points['日期'], y=death_cross_points['Price'],
-                                      mode='markers', name='📉 EMA死叉',
-                                      marker=dict(color='red', size=7, symbol='arrow-down', line=dict(width=1, color='black')),
-                                      legendgroup='crossover', legendrank=7, # 调整 legendrank
-                                      hovertemplate=hovertemplate_death_cross),
-                           row=1, col=1)
+        for i in range(len(golden_cross_points)):
+            point = golden_cross_points.iloc[i]
+            fig.add_annotation(
+                x=point['日期'], 
+                y=point['Price'] - offset, # 放在价格下方
+                text="↑", 
+                showarrow=False,
+                font=dict(size=14, color="green"),
+                hovertext=f"<b>📈 EMA金叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
+                hoverlabel=dict(bgcolor="white"), # 悬停标签背景
+                yanchor="top" # 锚点在文字顶部，使其位于y坐标之下
+            )
+            
+        for i in range(len(death_cross_points)):
+            point = death_cross_points.iloc[i]
+            fig.add_annotation(
+                x=point['日期'], 
+                y=point['Price'] + offset, # 放在价格上方
+                text="↓", 
+                showarrow=False,
+                font=dict(size=14, color="red"),
+                hovertext=f"<b>📉 EMA死叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
+                hoverlabel=dict(bgcolor="white"),
+                yanchor="bottom" # 锚点在文字底部，使其位于y坐标之上
+            )
+        
+        # 添加一个不可见的散点轨迹用于图例显示 (Annotations 不会自动加入图例)
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], # 没有实际数据点
+            mode='markers', 
+            marker=dict(color='green', symbol='triangle-up', size=8), # 用三角代替箭头显示
+            name='📈 EMA金叉事件'
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], 
+            mode='markers', 
+            marker=dict(color='red', symbol='triangle-down', size=8),
+            name='📉 EMA死叉事件'
+        ), row=1, col=1)
 
-    # --- 保留原始采购信号标记 ---
+    # --- 保留原始采购信号标记 --- 
+    # 同样移除 legendgroup
     signal_df = df[df['采购信号']]
     if not signal_df.empty:
         fig.add_trace(go.Scatter(x=signal_df['日期'], y=signal_df['Price'], mode='markers', name='⭐采购信号⭐',
                                  marker=dict(color='red', size=8, symbol='triangle-up', line=dict(width=1, color='black')),
-                                 legendgroup='signal', legendrank=5, # 确保 legendrank 合理
+                                 # legendgroup='signal', legendrank=5, 
                                  hovertemplate=hovertemplate_signal),
                       row=1, col=1)
 
-    # --- 行 2: 策略指标分析 ---
+    # --- 行 2: 策略指标分析 --- 
+    # 移除 legendgroup
     fig.add_trace(go.Scatter(x=df['日期'], y=df['工业指标'], mode='lines', name='核心工业指标',
-                             line=dict(color='royalblue'), legendgroup='indicator', legendrank=6,
+                             line=dict(color='royalblue'), # legendgroup='indicator', legendrank=8,
                              hovertemplate=hovertemplate_indicator),
                   row=2, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['基线阈值_短'], mode='lines', name=f'短期阈值 ({HISTORY_WINDOW_SHORT}日)',
-                             line=dict(color='darkorange', dash='dot', width=1), legendgroup='indicator', legendrank=7, opacity=0.7,
+                             line=dict(color='darkorange', dash='dot', width=1), # legendgroup='indicator', legendrank=9, 
+                             opacity=0.7,
                              hovertemplate=hovertemplate_threshold),
                   row=2, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['基线阈值'], mode='lines', name=f'中期阈值 ({HISTORY_WINDOW}日) - 警戒线',
-                             line=dict(color='crimson', dash='dash', width=1.5), legendgroup='indicator', legendrank=8,
+                             line=dict(color='crimson', dash='dash', width=1.5), # legendgroup='indicator', legendrank=10,
                              hovertemplate=hovertemplate_threshold),
                   row=2, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['基线阈值_长'], mode='lines', name=f'长期阈值 ({HISTORY_WINDOW_LONG}日)',
-                             line=dict(color='purple', dash='dashdot', width=1), legendgroup='indicator', legendrank=9, opacity=0.8,
+                             line=dict(color='purple', dash='dashdot', width=1), # legendgroup='indicator', legendrank=11, 
+                             opacity=0.8,
                              hovertemplate=hovertemplate_threshold),
                   row=2, col=1)
-
-    # --- 修改填充逻辑：使用 NaN 来创建条件性填充 ---
+    
+    # 填充区域逻辑保持不变，但填充区域本身不加图例或给个泛指名字
     y_upper = df['基线阈值']
     y_lower = df['工业指标']
-    # 创建一个新的 Series 用于填充，默认等于阈值（填充的上限）
     y_fill_lower = y_upper.copy()
-    # 只有当工业指标严格小于阈值时，才将填充下边界设置为工业指标的值
     fill_mask = y_lower < y_upper
     y_fill_lower[fill_mask] = y_lower[fill_mask]
-    # 在工业指标 >= 阈值的地方，y_fill_lower 保持为 y_upper 的值，这样填充会闭合到线上，视觉上无填充
-    # 或者，另一种方法是设置为 NaN，明确断开填充：
-    # y_fill_lower_nan = y_lower.copy()
-    # y_fill_lower_nan[~fill_mask] = np.nan
-    # 我们先尝试让不满足条件的区域填充到阈值线上，如果效果不好再换 NaN
-
-    # 添加透明的上/目标边界线 (实际是阈值线)
+    # 上边界（透明）
     fig.add_trace(go.Scatter(x=df['日期'], y=y_upper, fill=None, mode='lines', line_color='rgba(0,0,0,0)', showlegend=False, hoverinfo='skip'), row=2, col=1)
-
-    # 添加用于填充的轨迹。x是完整的日期，y是经过条件处理的y_fill_lower
-    # 当 y_fill_lower 等于 y_upper 时，填充区域高度为0，不可见。
-    # 当 y_fill_lower 等于 y_lower (且小于y_upper) 时，填充可见。
-    fig.add_trace(go.Scatter(x=df['日期'], y=y_fill_lower, # 使用条件处理后的下边界
-                             fill='tonexty', # 填充到上一条轨迹 (透明的y_upper)
+    # 填充轨迹
+    fig.add_trace(go.Scatter(x=df['日期'], y=y_fill_lower,
+                             fill='tonexty',
                              mode='lines',
-                             line=dict(width=0), # 设置线条宽度为0，只显示填充
+                             line=dict(width=0),
                              fillcolor='rgba(144, 238, 144, 0.3)',
-                             name='指标低于阈值区域 (买入条件1)',
-                             legendgroup='indicator',
-                             legendrank=10,
-                             # hoverinfo='skip' # 不对填充区域本身设置悬停，让下方的指标线响应悬停
-                             # 或者保留悬停，但可能显示阈值或指标值
-                             hovertemplate=hovertemplate_fill # 保持悬停模板
+                             name='指标<阈值区域', # 简洁图例名
+                             # legendgroup='indicator', legendrank=12, 
+                             hovertemplate=hovertemplate_fill
                              ), row=2, col=1)
-    # --- 结束修改填充逻辑 ---
-
+    
     fig.add_hline(y=1.0, line_dash="dot", line_color="gray", annotation_text="指标参考基准=1", row=2, col=1)
 
-    # --- 行 3: 动量指标分析 ---
+
+    # --- 行 3: 动量指标分析 --- 
+    # 移除 legendgroup
     fig.add_trace(go.Scatter(x=df['日期'], y=df['修正RSI'], mode='lines', name='修正RSI (市场强弱)',
-                             line=dict(color='darkviolet'), legendgroup='momentum', legendrank=11,
+                             line=dict(color='darkviolet'), # legendgroup='momentum', legendrank=13,
                              hovertemplate=hovertemplate_rsi),
                   row=3, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['RSI阈值'], mode='lines', name='动态RSI阈值',
-                             line=dict(color='darkorange', dash='dash'), legendgroup='momentum', legendrank=12,
+                             line=dict(color='darkorange', dash='dash'), # legendgroup='momentum', legendrank=14,
                              hovertemplate=hovertemplate_rsi_threshold),
                   row=3, col=1)
     fig.add_hline(y=45, line_dash="dot", line_color="red", opacity=0.5, annotation_text="RSI超卖参考线=45 (买入条件2)", row=3, col=1, name="RSI 45")
 
-    # --- 更新整体布局 ---
+    # --- 更新整体布局 --- 
     fig.update_layout(
         height=900,
         title_text='银价分析与策略可视化 (交互式图表)',
         hovermode='x unified',
-        legend_title_text='图例说明',
-        margin=dict(l=60, r=60, t=100, b=60)
+        legend_title_text='图例说明 (点击可隐藏/显示)', # 更新图例标题
+        margin=dict(l=60, r=60, t=100, b=60),
+        # 移除 legend traceorder 或设置为 'normal' 让其按添加顺序显示
+        # legend=dict(traceorder='reversed+grouped') 
+        legend=dict(traceorder='normal')
     )
     fig.update_yaxes(title_text="价格 (CNY)", row=1, col=1)
     fig.update_yaxes(title_text="指标值", row=2, col=1)
