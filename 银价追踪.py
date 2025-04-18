@@ -896,8 +896,13 @@ def create_visualization(df):
         y_range = df['Price'].max() - df['Price'].min()
         offset = y_range * 0.015 # Y轴范围的 1.5% 作为偏移
 
+        # --- 绘制金叉标记 --- 
         for i in range(len(golden_cross_points)):
             point = golden_cross_points.iloc[i]
+            # --- 新增：验证金叉标记点状态 ---
+            if not point['ema9_above_ema21']:
+                print(f"警告: 在日期 {point['日期']:%Y-%m-%d} 尝试标记金叉 (↑)，但实际 EMA9 ({point['EMA9']:.2f}) 不大于 EMA21 ({point['EMA21']:.2f})! Cross Change 值: {cross_change.loc[point.name]}")
+            # --- 结束验证 ---
             fig.add_annotation(
                 x=point['日期'], 
                 y=point['Price'] - offset, # 放在价格下方
