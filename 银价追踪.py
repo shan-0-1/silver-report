@@ -492,7 +492,7 @@ def generate_report(df):
         'signal': "综合所有核心条件和阻断规则得出的最终建议。",
         'dynamic_window': f"计算思路: 基准窗口({BASE_WINDOW_SHORT}/{BASE_WINDOW_LONG}天)根据距离上次购买天数进行衰减({WINDOW_DECAY_RATE}率)，最短{MIN_WINDOW_SHORT}天。距离越久，窗口越短，越灵敏。",
         'price_trend': "计算思路: (当前价格 / 短期动态均线 - 1) * 100%。表示价格偏离近期平均成本的程度。",
-        'volatility': f"计算思路: 最近{int(current.get('动态短窗口', BASE_WINDOW_SHORT))}天内每日价格变化百分比绝对值的平均值。此指标衡量价格波动的剧烈程度（即近期波动率），值越低表示市场越平静。注意：名称可能易误导，它主要反映波动性而非趋势动量。", # 确保天数是整数
+        'volatility': f"计算思路: 最近{{dynamic_short_window_val}}天内每日价格变化百分比绝对值的平均值。此指标衡量价格波动的剧烈程度（即近期波动率），值越低表示市场越平静。注意：名称可能易误导，它主要反映波动性而非趋势动量。", # 使用占位符
         'core_cond1': f"工业指标 ({indicator:.2f}) 是否低于基线阈值 ({threshold:.2f})？",
         'core_cond2': f"修正RSI ({rsi:.1f}) 是否低于 45？RSI通过计算一定时期内上涨日和下跌日的平均涨跌幅得到，衡量买卖力量，低于45通常表示超卖。",
         'core_cond3': f"当前价格 ({price:.2f}) 是否低于 EMA21 ({ema21:.2f})？EMA是指数移动平均线，给予近期价格更高权重。",
@@ -500,17 +500,50 @@ def generate_report(df):
         'core_cond5': f"EMA9/EMA21比率 ({ema_ratio:.3f}) 是否大于动态阈值 ({dynamic_threshold:.3f})？该阈值会根据波动性调整。",
         'core_cond6': f"动量因子 ({volatility:.3f}) 是否低于其动态阈值 ({vol_threshold:.3f})？该阈值是动量因子自身的45日35%分位数。",
         'cond_score': "满足以上6个核心条件的数量，至少需要满足4个才能初步考虑买入。",
-        'peak_filter': f"一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。",
+        'peak_filter': f"一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({{atr_upper_val:.2f}})80%以上位置，用于排除一些潜在的顶部信号。", # 使用占位符
         'interval': f"距离上次系统发出买入信号的天数，要求至少间隔 {MIN_PURCHASE_INTERVAL} 天才能再次买入。",
         'window_decay': "显示当前动态短窗口相比基准窗口缩短了多少天，反映了衰减机制的效果。",
-        'ema_trend': f"基于EMA9({ema9:.2f}), EMA21({ema21:.2f}), EMA50({ema50:.2f})的相对位置判断短期趋势。当EMA9>EMA21且EMA21>EMA50时为多头，反之为空头。",
+        'ema_trend': f"基于EMA9({{ema9_val:.2f}}), EMA21({{ema21_val:.2f}}), EMA50({{ema50_val:.2f}})的相对位置判断短期趋势。当EMA9>EMA21且EMA21>EMA50时为多头，反之为空头。", # 使用占位符
         'final_block': "总结导致最终未能产生买入信号的具体原因。",
-        '3day_change': "最近三个交易日的价格变化绝对值和方向。"
+        '3day_change': "最近三个交易日的价格变化绝对值和方向。",
+        'ema_crossover': f"基于EMA9和EMA21的交叉状态。金叉(EMA9上穿EMA21)通常视为看涨信号，死叉(EMA9下穿EMA21)通常视为看跌信号。" # 新增EMA交叉解释
     }
 
     # --- 构建 HTML 报告字符串 ---
-    # 使用 span/strong/li/h3 等标签的 title 属性添加悬停提示
-    # 移除了文本中的 (?) 标记
+    # 使用 format 方法动态填充 HOVER_TEXTS 中的变量
+    dynamic_short_window_val = int(current.get('动态短窗口', BASE_WINDOW_SHORT))
+    atr_upper_val = safe_float(current.get('波动上轨', price * 1.05))
+    ema9_val = safe_float(current.get('EMA9', price))
+    ema21_val = safe_float(current['EMA21'], default=price)
+    ema50_val = safe_float(current.get('EMA50', price))
+
+    # 填充 HOVER_TEXTS
+    for key in HOVER_TEXTS:
+        try:
+            HOVER_TEXTS[key] = HOVER_TEXTS[key].format(
+                HISTORY_WINDOW=HISTORY_WINDOW,
+                BASE_WINDOW_SHORT=BASE_WINDOW_SHORT,
+                BASE_WINDOW_LONG=BASE_WINDOW_LONG,
+                WINDOW_DECAY_RATE=WINDOW_DECAY_RATE,
+                MIN_WINDOW_SHORT=MIN_WINDOW_SHORT,
+                indicator=indicator, threshold=threshold,
+                rsi=rsi, price=price, ema21=ema21, lower_band=lower_band,
+                ema_ratio=ema_ratio, dynamic_threshold=dynamic_threshold,
+                volatility=volatility, vol_threshold=vol_threshold,
+                atr_upper_val=atr_upper_val, # 使用填充后的值
+                MIN_PURCHASE_INTERVAL=MIN_PURCHASE_INTERVAL,
+                ema9_val=ema9_val, # 使用填充后的值
+                ema21_val=ema21_val, # 使用填充后的值
+                ema50_val=ema50_val, # 使用填充后的值
+                dynamic_short_window_val=dynamic_short_window_val # 使用填充后的值
+            )
+        except KeyError as e:
+            # 如果某个 key 的 format 字符串包含未定义的占位符，打印警告
+            print(f"警告: 在格式化 HOVER_TEXTS['{key}'] 时缺少键: {e}")
+        except Exception as e:
+            print(f"警告: 格式化 HOVER_TEXTS['{key}'] 时发生错误: {e}")
+
+
     report_html = f"""
     <div style="font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: auto; padding: 20px; border: 1px solid #eee; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
         <h2 style="text-align: center; border-bottom: 1px solid #ccc; padding-bottom: 10px;">银价采购分析报告</h2>
@@ -527,12 +560,46 @@ def generate_report(df):
             <li title='{HOVER_TEXTS['price_trend']}'>价格趋势：当前价格比短期均线 {'高' if price_trend_vs_sma > 0 else '低'} {abs(price_trend_vs_sma):.1f}%</li>
             <li title='{HOVER_TEXTS['volatility']}'>市场波动性（动量因子）：{volatility*100:.1f}%</li>
         </ul>
+
+        <h3 title='{HOVER_TEXTS['ema_crossover']}'>📈 短期趋势信号 (EMA交叉)：</h3>
+        <ul>
     """
+    # --- 新增EMA交叉状态判断逻辑 ---
+    ema_crossover_status = "无明确交叉"
+    ema_crossover_color = "gray"
+    # 检查是否存在 'EMA金叉' 列，并且 DataFrame 不为空
+    if 'EMA金叉' in df.columns and not df.empty:
+        # 确保该列是布尔类型
+        if pd.api.types.is_bool_dtype(df['EMA金叉']):
+            current_ema_cross = current.get('EMA金叉', None)
+            if current_ema_cross is True:
+                ema_crossover_status = "金叉状态 (EMA9 > EMA21，看涨倾向)"
+                ema_crossover_color = "green"
+            elif current_ema_cross is False:
+                 # 需要检查前一天是否为 True 来判断是否刚发生死叉
+                 if len(df) > 1:
+                     prev_ema_cross = df['EMA金叉'].iloc[-2]
+                     if prev_ema_cross is True:
+                          ema_crossover_status = "刚刚发生死叉 (EMA9 < EMA21，看跌倾向)"
+                          ema_crossover_color = "red"
+                     else:
+                          ema_crossover_status = "死叉状态 (EMA9 < EMA21，看跌倾向)"
+                          ema_crossover_color = "orange" # 或者保持红色
+                 else: # 如果只有一行数据
+                     ema_crossover_status = "死叉状态 (EMA9 < EMA21，看跌倾向)"
+                     ema_crossover_color = "orange" # 或 red
+            # 如果 current_ema_cross 是 None (例如因为计算失败或数据不足)
+            # status 保持 "无明确交叉"
+        else:
+            print("警告: 'EMA金叉' 列不是布尔类型，无法判断交叉状态。")
+    # --- 结束EMA交叉状态判断逻辑 ---
+
+    report_html += f'<li>当前状态：<strong style="color:{ema_crossover_color};">{ema_crossover_status}</strong></li>'
+    report_html += "</ul>"
 
     # --- 定义六个核心买入条件的中文解释和当前状态 ---
     CONDITION_EXPLANATIONS = {
         'core': {
-            # 使用单引号简化 title 属性的引用
             'cond1': ("工业指标 < 阈值", f"{indicator:.2f} < {threshold:.2f}", HOVER_TEXTS['core_cond1']),
             'cond2': ("RSI < 45 (超卖区域)", f"RSI {rsi:.1f} < 45", HOVER_TEXTS['core_cond2']),
             'cond3': ("价格 < EMA21", f"价格 {price:.2f} < EMA21 {ema21:.2f}", HOVER_TEXTS['core_cond3']),
