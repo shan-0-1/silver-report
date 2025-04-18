@@ -880,16 +880,18 @@ def create_visualization(df):
     # 使用新的 'ema9_above_ema21' 列来检测视觉交叉
     if 'ema9_above_ema21' in df.columns and pd.api.types.is_bool_dtype(df['ema9_above_ema21']) and len(df) > 1:
         # 检测 ema9_above_ema21 状态的变化
-        cross_change = df['ema9_above_ema21'].diff()
+        # --- 修改：先转换为整数再求差分 ---
+        cross_change = df['ema9_above_ema21'].astype(int).diff()
+        # --- 结束修改 ---
         # diff == 1 表示从 False 变为 True (视觉金叉)
         golden_cross_points = df[(cross_change == 1)]
         # diff == -1 表示从 True 变为 False (视觉死叉)
         death_cross_points = df[(cross_change == -1)]
 
-        # --- 添加调试打印 ---
-        print(f"检测到的视觉金叉点数量: {len(golden_cross_points)}")
-        print(f"检测到的视觉死叉点数量: {len(death_cross_points)}")
-        # --- 结束调试打印 ---
+        # --- 移除调试打印 ---
+        # print(f"检测到的视觉金叉点数量: {len(golden_cross_points)}")
+        # print(f"检测到的视觉死叉点数量: {len(death_cross_points)}")
+        # --- 结束移除 ---
 
         # 计算一个小的偏移量，让箭头稍微离开价格线
         # 使用 Y 轴范围的一个小比例作为偏移量，避免绝对值过大或过小
