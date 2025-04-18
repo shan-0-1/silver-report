@@ -896,8 +896,8 @@ def create_visualization(df):
         # 计算一个小的偏移量，让箭头稍微离开价格线
         # 使用 Y 轴范围的一个小比例作为偏移量，避免绝对值过大或过小
         y_range = df['Price'].max() - df['Price'].min()
-        # --- 修改：增大偏移量 ---
-        offset = y_range * 0.035 # Y轴范围的 3.5% 作为偏移
+        # --- 修改：进一步增大偏移量 ---
+        offset = y_range * 0.05 # Y轴范围的 5% 作为偏移
         # --- 结束修改 ---
 
         # --- 绘制金叉标记 --- 
@@ -906,10 +906,14 @@ def create_visualization(df):
             fig.add_annotation(
                 x=point['日期'],
                 y=point['Price'] - offset, # 放在价格下方
-                # --- 修改：加粗箭头，增大字号 ---
+                # --- 修改：加粗箭头，增大字号，添加背景和边框 ---
                 text="<b>↑</b>",
                 showarrow=False,
-                font=dict(size=16, color="green"),
+                font=dict(size=18, color="green"),
+                bgcolor='rgba(255, 255, 255, 0.7)', # 半透明白色背景
+                bordercolor='rgba(0, 0, 0, 0.5)',   # 半透明黑色边框
+                borderwidth=1,
+                borderpad=2,                        # 背景内边距
                 # --- 结束修改 ---
                 # 更新悬停文本，明确是视觉交叉
                 hovertext=f"<b>📈 EMA视觉金叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
@@ -923,10 +927,14 @@ def create_visualization(df):
             fig.add_annotation(
                 x=point['日期'],
                 y=point['Price'] + offset, # 放在价格上方
-                 # --- 修改：加粗箭头，增大字号 ---
+                 # --- 修改：加粗箭头，增大字号，添加背景和边框 ---
                 text="<b>↓</b>",
                 showarrow=False,
-                font=dict(size=16, color="red"),
+                font=dict(size=18, color="red"),
+                bgcolor='rgba(255, 255, 255, 0.7)', # 半透明白色背景
+                bordercolor='rgba(0, 0, 0, 0.5)',   # 半透明黑色边框
+                borderwidth=1,
+                borderpad=2,                        # 背景内边距
                 # --- 结束修改 ---
                 # 更新悬停文本，明确是视觉交叉
                 hovertext=f"<b>📉 EMA视觉死叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
