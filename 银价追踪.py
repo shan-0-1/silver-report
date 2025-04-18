@@ -1044,7 +1044,7 @@ def create_visualization(df):
 
 def create_backtest_visualization(df, dca_interval=21):
     """
-    生成策略与固定间隔定投的回测对比图表。
+    生成策略与固定间隔定投的回测对比图表 (基于相同采购次数)。
 
     Args:
         df (pd.DataFrame): 包含价格和策略采购信号的 DataFrame。
@@ -1053,87 +1053,137 @@ def create_backtest_visualization(df, dca_interval=21):
     Returns:
         plotly.graph_objects.Figure: 包含对比图表的 Plotly Figure 对象。
     """
-    print(f"开始生成回测对比图，定投间隔设置为 {dca_interval} 个交易日...")
-    df_backtest = df.copy() # 操作副本，避免修改原始数据
+    print(f"开始生成回测对比图 (公平比较模式)，定投间隔 {dca_interval} 交易日...")
+    df_backtest = df.copy()
 
     # --- 策略 1: 使用现有策略信号 ---
     df_backtest['purchase_strategy'] = df_backtest['采购信号']
-    # 每次采购成本 (假设买1单位)
     df_backtest['cost_strategy'] = df_backtest['Price'].where(df_backtest['purchase_strategy'], 0)
-    # 累计采购数量
     df_backtest['cum_quantity_strategy'] = df_backtest['purchase_strategy'].astype(int).cumsum()
-    # 累计采购成本
     df_backtest['cum_cost_strategy'] = df_backtest['cost_strategy'].cumsum()
-    # 平均采购成本 (处理初始除零)
     df_backtest['avg_cost_strategy'] = (df_backtest['cum_cost_strategy'] / df_backtest['cum_quantity_strategy'])
-    df_backtest['avg_cost_strategy'] = df_backtest['avg_cost_strategy'].fillna(method='ffill').fillna(0) # 前向填充再填0
+    df_backtest['avg_cost_strategy'].fillna(method='ffill', inplace=True)
+    df_backtest['avg_cost_strategy'].fillna(0, inplace=True) # 确保开头没有 NaN
 
-    # --- 策略 2: 固定间隔定投 (DCA) ---
-    # 使用 DataFrame 的索引（交易日序号）来确定间隔
-    # (df_backtest.index % dca_interval == 0) 会选中第 0, N, 2N, ... 天
-    # 我们通常希望从第一个完整周期开始定投，所以可以跳过索引 0
-    df_backtest['purchase_dca'] = (df_backtest.index % dca_interval == 0) & (df_backtest.index > 0)
-    df_backtest['cost_dca'] = df_backtest['Price'].where(df_backtest['purchase_dca'], 0)
-    df_backtest['cum_quantity_dca'] = df_backtest['purchase_dca'].astype(int).cumsum()
-    df_backtest['cum_cost_dca'] = df_backtest['cost_dca'].cumsum()
-    df_backtest['avg_cost_dca'] = (df_backtest['cum_cost_dca'] / df_backtest['cum_quantity_dca'])
-    df_backtest['avg_cost_dca'] = df_backtest['avg_cost_dca'].fillna(method='ffill').fillna(0)
+    # 获取策略总购买次数
+    total_purchases_strategy = df_backtest['cum_quantity_strategy'].iloc[-1]
+    if total_purchases_strategy == 0:
+        print("警告：策略信号未产生任何采购，无法进行公平比较。")
+        # 可以选择返回一个空图或带有警告信息的图
+        fig = go.Figure()
+        fig.update_layout(title_text="策略信号未产生任何采购，无法回测对比")
+        return fig
 
-    # --- 可视化 ---
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
-                        subplot_titles=('累计采购成本对比', '平均采购成本对比 (越低越好)'))
+    # --- 策略 2: 固定间隔定投 (DCA) - 调整为公平次数 ---
+    # 先计算所有可能的定投点
+    df_backtest['purchase_dca_all'] = (df_backtest.index % dca_interval == 0) & (df_backtest.index > 0)
+    # 找出所有定投点的索引
+    dca_all_indices = df_backtest.index[df_backtest['purchase_dca_all']]
+    # 确保定投次数不超过策略次数
+    num_dca_purchases = min(len(dca_all_indices), total_purchases_strategy)
+    if num_dca_purchases == 0:
+        print(f"警告：在匹配策略采购次数({total_purchases_strategy})下，定投策略未产生任何采购，无法进行公平比较。")
+        fig = go.Figure()
+        fig.update_layout(title_text=f"定投策略在匹配次数({total_purchases_strategy})下无采购，无法回测对比")
+        return fig
+        
+    # 选择公平比较所需的定投索引
+    fair_dca_indices = dca_all_indices[:num_dca_purchases]
+    
+    # 创建公平比较的定投信号列
+    df_backtest['purchase_dca_fair'] = False
+    df_backtest.loc[fair_dca_indices, 'purchase_dca_fair'] = True
+
+    # 基于公平次数的定投计算
+    df_backtest['cost_dca_fair'] = df_backtest['Price'].where(df_backtest['purchase_dca_fair'], 0)
+    df_backtest['cum_quantity_dca_fair'] = df_backtest['purchase_dca_fair'].astype(int).cumsum()
+    df_backtest['cum_cost_dca_fair'] = df_backtest['cost_dca_fair'].cumsum()
+    df_backtest['avg_cost_dca_fair'] = (df_backtest['cum_cost_dca_fair'] / df_backtest['cum_quantity_dca_fair'])
+    df_backtest['avg_cost_dca_fair'].fillna(method='ffill', inplace=True)
+    df_backtest['avg_cost_dca_fair'].fillna(0, inplace=True) # 确保开头没有 NaN
+    
+    # --- 计算相对表现 --- 
+    # 计算平均成本差值 (定投 - 策略)，正数表示策略更优
+    # 仅在两者都有有效平均成本时计算
+    df_backtest['avg_cost_diff'] = np.nan # 初始化为 NaN
+    valid_comparison_mask = (df_backtest['avg_cost_strategy'] > 0) & (df_backtest['avg_cost_dca_fair'] > 0)
+    df_backtest.loc[valid_comparison_mask, 'avg_cost_diff'] = df_backtest['avg_cost_dca_fair'] - df_backtest['avg_cost_strategy']
+    df_backtest['avg_cost_diff'].fillna(method='ffill', inplace=True) # 填充计算开始前的 NaN
+    df_backtest['avg_cost_diff'].fillna(0, inplace=True) # 填充最开始的 NaN
+
+    # --- 可视化 (3个子图) --- 
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, # 减小间距
+                        subplot_titles=(
+                            '累计采购成本对比 (基于相同采购次数)',
+                            '平均采购成本对比 (基于相同采购次数，越低越好)',
+                            '平均成本差值 (定投 - 策略, >0 表示策略更优)'
+                        ))
 
     # 子图 1: 累计成本
-    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['cum_cost_strategy'],
+    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['cum_cost_strategy'], 
                              mode='lines', name='策略信号累计成本', line=dict(color='royalblue')),
                   row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['cum_cost_dca'],
-                             mode='lines', name=f'每{dca_interval}天定投累计成本', line=dict(color='darkorange')),
+    # 使用公平比较的定投成本
+    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['cum_cost_dca_fair'], 
+                             mode='lines', name=f'定投(公平次数)累计成本', line=dict(color='darkorange')),
                   row=1, col=1)
-    # 添加买点标记
+    # 添加买点标记 (策略)
     strategy_buy_points = df_backtest[df_backtest['purchase_strategy']]
-    dca_buy_points = df_backtest[df_backtest['purchase_dca']]
-    fig.add_trace(go.Scatter(x=strategy_buy_points['日期'], y=strategy_buy_points['cum_cost_strategy'],
-                             mode='markers', name='策略买点',
-                             marker=dict(color='royalblue', symbol='circle', size=6, line=dict(width=1, color='black')),
-                             showlegend=False, # 不单独显示买点图例
-                             hovertext='策略采购点'),
+    fig.add_trace(go.Scatter(x=strategy_buy_points['日期'], y=strategy_buy_points['cum_cost_strategy'], 
+                             mode='markers', name='策略买点', 
+                             marker=dict(color='royalblue', symbol='circle', size=5), # 缩小标记
+                             showlegend=False, hovertext='策略采购点'),
                   row=1, col=1)
-    fig.add_trace(go.Scatter(x=dca_buy_points['日期'], y=dca_buy_points['cum_cost_dca'],
-                             mode='markers', name='定投买点',
-                             marker=dict(color='darkorange', symbol='square', size=6, line=dict(width=1, color='black')),
-                             showlegend=False, # 不单独显示买点图例
-                             hovertext='定投采购点'),
+    # 添加买点标记 (公平定投)
+    dca_fair_buy_points = df_backtest[df_backtest['purchase_dca_fair']]
+    fig.add_trace(go.Scatter(x=dca_fair_buy_points['日期'], y=dca_fair_buy_points['cum_cost_dca_fair'], 
+                             mode='markers', name='定投买点(公平)', 
+                             marker=dict(color='darkorange', symbol='square', size=5), # 缩小标记
+                             showlegend=False, hovertext='定投(公平)采购点'),
                   row=1, col=1)
 
     # 子图 2: 平均成本
-    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['avg_cost_strategy'],
+    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['avg_cost_strategy'], 
                              mode='lines', name='策略信号平均成本', line=dict(color='royalblue', dash='dash')),
                   row=2, col=1)
-    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['avg_cost_dca'],
-                             mode='lines', name=f'每{dca_interval}天定投平均成本', line=dict(color='darkorange', dash='dash')),
+    # 使用公平比较的定投平均成本
+    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['avg_cost_dca_fair'], 
+                             mode='lines', name=f'定投(公平次数)平均成本', line=dict(color='darkorange', dash='dash')),
                   row=2, col=1)
 
-    # --- 布局与信息 ---
-    total_quantity_strategy = df_backtest['cum_quantity_strategy'].iloc[-1]
+    # 子图 3: 平均成本差值
+    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['avg_cost_diff'],
+                             mode='lines', name='平均成本差 (DCA - 策略)', 
+                             line=dict(color='purple')),
+                  row=3, col=1)
+    # 添加零线参考
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", row=3, col=1)
+
+    # --- 布局与信息 (更新) --- 
     final_avg_cost_strategy = df_backtest['avg_cost_strategy'].iloc[-1]
-    total_quantity_dca = df_backtest['cum_quantity_dca'].iloc[-1]
-    final_avg_cost_dca = df_backtest['avg_cost_dca'].iloc[-1]
+    final_avg_cost_dca_fair = df_backtest['avg_cost_dca_fair'].iloc[-1]
+    # 使用公平比较后的定投次数
+    final_total_quantity_dca_fair = df_backtest['cum_quantity_dca_fair'].iloc[-1] 
 
     fig.update_layout(
-        title_text=f'策略回测对比 (定投间隔: {dca_interval} 交易日)<br><sup>策略信号: 共采购 {total_quantity_strategy} 次, 最终平均成本 {final_avg_cost_strategy:.2f} | 定投: 共采购 {total_quantity_dca} 次, 最终平均成本 {final_avg_cost_dca:.2f}</sup>',
+        # 更新标题以反映公平比较和次数
+        title_text=f'策略回测公平对比 (均采购 {total_purchases_strategy} 次, 定投间隔: {dca_interval} 交易日)<br><sup>最终平均成本: 策略信号 {final_avg_cost_strategy:.2f} | 定投 {final_avg_cost_dca_fair:.2f}</sup>',
         hovermode='x unified',
-        height=800,
+        height=900, # 增加高度以容纳第三个子图
         legend_title_text='策略/指标',
-        legend=dict(traceorder='normal')
+        legend=dict(traceorder='normal', yanchor="top", y=0.99, xanchor="left", x=0.01) # 调整图例位置
     )
     fig.update_yaxes(title_text="累计成本 (CNY)", row=1, col=1)
     fig.update_yaxes(title_text="平均成本 (CNY/单位)", row=2, col=1)
-    fig.update_xaxes(title_text="日期", row=2, col=1)
-    fig.update_xaxes(showticklabels=False, row=1, col=1) # 隐藏第一个子图的x轴标签
+    # 更新第三个子图的 Y 轴标签
+    fig.update_yaxes(title_text="成本差 (DCA-策略)", row=3, col=1)
+    fig.update_xaxes(title_text="日期", row=3, col=1)
+    fig.update_xaxes(showticklabels=False, row=1, col=1)
+    fig.update_xaxes(showticklabels=False, row=2, col=1)
 
-    print(f"回测对比计算完成：策略信号采购 {total_quantity_strategy} 次，最终平均成本 {final_avg_cost_strategy:.2f}")
-    print(f"回测对比计算完成：定投采购 {total_quantity_dca} 次，最终平均成本 {final_avg_cost_dca:.2f}")
+    print(f"回测公平对比计算完成 (均采购 {total_purchases_strategy} 次)：")
+    print(f"  策略信号最终平均成本: {final_avg_cost_strategy:.2f}")
+    print(f"  定投({dca_interval}天间隔)最终平均成本: {final_avg_cost_dca_fair:.2f}")
 
     return fig
 
