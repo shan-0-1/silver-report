@@ -1042,6 +1042,102 @@ def create_visualization(df):
     return fig
 
 
+def create_backtest_visualization(df, dca_interval=21):
+    """
+    生成策略与固定间隔定投的回测对比图表。
+
+    Args:
+        df (pd.DataFrame): 包含价格和策略采购信号的 DataFrame。
+        dca_interval (int): 固定间隔定投的交易日间隔 (例如 21 约等于每月)。
+
+    Returns:
+        plotly.graph_objects.Figure: 包含对比图表的 Plotly Figure 对象。
+    """
+    print(f"开始生成回测对比图，定投间隔设置为 {dca_interval} 个交易日...")
+    df_backtest = df.copy() # 操作副本，避免修改原始数据
+
+    # --- 策略 1: 使用现有策略信号 ---
+    df_backtest['purchase_strategy'] = df_backtest['采购信号']
+    # 每次采购成本 (假设买1单位)
+    df_backtest['cost_strategy'] = df_backtest['Price'].where(df_backtest['purchase_strategy'], 0)
+    # 累计采购数量
+    df_backtest['cum_quantity_strategy'] = df_backtest['purchase_strategy'].astype(int).cumsum()
+    # 累计采购成本
+    df_backtest['cum_cost_strategy'] = df_backtest['cost_strategy'].cumsum()
+    # 平均采购成本 (处理初始除零)
+    df_backtest['avg_cost_strategy'] = (df_backtest['cum_cost_strategy'] / df_backtest['cum_quantity_strategy'])
+    df_backtest['avg_cost_strategy'] = df_backtest['avg_cost_strategy'].fillna(method='ffill').fillna(0) # 前向填充再填0
+
+    # --- 策略 2: 固定间隔定投 (DCA) ---
+    # 使用 DataFrame 的索引（交易日序号）来确定间隔
+    # (df_backtest.index % dca_interval == 0) 会选中第 0, N, 2N, ... 天
+    # 我们通常希望从第一个完整周期开始定投，所以可以跳过索引 0
+    df_backtest['purchase_dca'] = (df_backtest.index % dca_interval == 0) & (df_backtest.index > 0)
+    df_backtest['cost_dca'] = df_backtest['Price'].where(df_backtest['purchase_dca'], 0)
+    df_backtest['cum_quantity_dca'] = df_backtest['purchase_dca'].astype(int).cumsum()
+    df_backtest['cum_cost_dca'] = df_backtest['cost_dca'].cumsum()
+    df_backtest['avg_cost_dca'] = (df_backtest['cum_cost_dca'] / df_backtest['cum_quantity_dca'])
+    df_backtest['avg_cost_dca'] = df_backtest['avg_cost_dca'].fillna(method='ffill').fillna(0)
+
+    # --- 可视化 ---
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                        subplot_titles=('累计采购成本对比', '平均采购成本对比 (越低越好)'))
+
+    # 子图 1: 累计成本
+    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['cum_cost_strategy'],
+                             mode='lines', name='策略信号累计成本', line=dict(color='royalblue')),
+                  row=1, col=1)
+    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['cum_cost_dca'],
+                             mode='lines', name=f'每{dca_interval}天定投累计成本', line=dict(color='darkorange')),
+                  row=1, col=1)
+    # 添加买点标记
+    strategy_buy_points = df_backtest[df_backtest['purchase_strategy']]
+    dca_buy_points = df_backtest[df_backtest['purchase_dca']]
+    fig.add_trace(go.Scatter(x=strategy_buy_points['日期'], y=strategy_buy_points['cum_cost_strategy'],
+                             mode='markers', name='策略买点',
+                             marker=dict(color='royalblue', symbol='circle', size=6, line=dict(width=1, color='black')),
+                             showlegend=False, # 不单独显示买点图例
+                             hovertext='策略采购点'),
+                  row=1, col=1)
+    fig.add_trace(go.Scatter(x=dca_buy_points['日期'], y=dca_buy_points['cum_cost_dca'],
+                             mode='markers', name='定投买点',
+                             marker=dict(color='darkorange', symbol='square', size=6, line=dict(width=1, color='black')),
+                             showlegend=False, # 不单独显示买点图例
+                             hovertext='定投采购点'),
+                  row=1, col=1)
+
+    # 子图 2: 平均成本
+    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['avg_cost_strategy'],
+                             mode='lines', name='策略信号平均成本', line=dict(color='royalblue', dash='dash')),
+                  row=2, col=1)
+    fig.add_trace(go.Scatter(x=df_backtest['日期'], y=df_backtest['avg_cost_dca'],
+                             mode='lines', name=f'每{dca_interval}天定投平均成本', line=dict(color='darkorange', dash='dash')),
+                  row=2, col=1)
+
+    # --- 布局与信息 ---
+    total_quantity_strategy = df_backtest['cum_quantity_strategy'].iloc[-1]
+    final_avg_cost_strategy = df_backtest['avg_cost_strategy'].iloc[-1]
+    total_quantity_dca = df_backtest['cum_quantity_dca'].iloc[-1]
+    final_avg_cost_dca = df_backtest['avg_cost_dca'].iloc[-1]
+
+    fig.update_layout(
+        title_text=f'策略回测对比 (定投间隔: {dca_interval} 交易日)<br><sup>策略信号: 共采购 {total_quantity_strategy} 次, 最终平均成本 {final_avg_cost_strategy:.2f} | 定投: 共采购 {total_quantity_dca} 次, 最终平均成本 {final_avg_cost_dca:.2f}</sup>',
+        hovermode='x unified',
+        height=800,
+        legend_title_text='策略/指标',
+        legend=dict(traceorder='normal')
+    )
+    fig.update_yaxes(title_text="累计成本 (CNY)", row=1, col=1)
+    fig.update_yaxes(title_text="平均成本 (CNY/单位)", row=2, col=1)
+    fig.update_xaxes(title_text="日期", row=2, col=1)
+    fig.update_xaxes(showticklabels=False, row=1, col=1) # 隐藏第一个子图的x轴标签
+
+    print(f"回测对比计算完成：策略信号采购 {total_quantity_strategy} 次，最终平均成本 {final_avg_cost_strategy:.2f}")
+    print(f"回测对比计算完成：定投采购 {total_quantity_dca} 次，最终平均成本 {final_avg_cost_dca:.2f}")
+
+    return fig
+
+
 # --- 主程序：生成 HTML 报告 ---
 if __name__ == "__main__":
     print("开始执行银价分析...")
@@ -1060,33 +1156,28 @@ if __name__ == "__main__":
     df = generate_signals(df)
 
     # 3. 生成报告数据
-    print("正在生成报告数据...")
-    # 修改：接收包含内容和分析数据的字典
+    print("正在生成主报告数据...")
     report_data = generate_report(df)
     report_html_content = report_data['report_content']
-    analysis_data = report_data['analysis_data'] # 提取分析数据
+    analysis_data = report_data['analysis_data']
 
-    # 4. 生成图表 Figure 对象
-    print("正在生成图表...")
+    # 4. 生成主图表 Figure 对象
+    print("正在生成主图表...")
     fig = create_visualization(df)
 
-    # 5. 将图表转换为 HTML div (改回使用 CDN)
-    # 使用 include_plotlyjs='cdn' 使 HTML 文件更小，依赖网络加载 JS
-    # 使用 full_html=False 只获取图表的 div 部分
+    # 5. 将主图表转换为 HTML div
     try:
-        # --- 修改下面这行 ---
         chart_html_div = pio.to_html(fig, full_html=False, include_plotlyjs='cdn')
-        # --- 结束修改 ---
         if not chart_html_div or len(chart_html_div.strip()) == 0:
-             print("警告：生成的图表 HTML 为空。")
-             chart_html_div = "<p style='color:orange;'>图表生成似乎为空。</p>"
+             print("警告：生成的主图表 HTML 为空。")
+             chart_html_div = "<p style='color:orange;'>主图表生成似乎为空。</p>"
     except Exception as e:
-        print(f"错误：将 Plotly 图表转换为 HTML 时失败: {e}")
-        chart_html_div = "<p style='color:red;'>图表生成失败。</p>"
+        print(f"错误：将主 Plotly 图表转换为 HTML 时失败: {e}")
+        chart_html_div = "<p style='color:red;'>主图表生成失败。</p>"
 
-    # 6. 构建完整的 HTML 页面
-    
-    # --- 6.1 预先构建动态"今日解读"部分的 HTML --- 
+    # 6. 构建完整的 HTML 页面 (主报告)
+    # ... (这部分代码保持不变，需要从原始文件中获取) ...
+    # --- 6.1 预先构建动态\"今日解读\"部分的 HTML ---
     today_interpretation_html = f'''
         <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data['current_date'].strftime('%Y-%m-%d')}) 的策略信号解读：</h3>
         <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购 ({})</span>'.format(analysis_data['signal_strength']) if analysis_data['signal'] else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
@@ -1107,7 +1198,6 @@ if __name__ == "__main__":
             <li><strong>结论：</strong><span style="color:green;">由于关键买入指标进入策略目标区域，满足了 {analysis_data['condition_scores']} 项核心条件，并且无明确的信号阻断因素，策略判定当前形成 <strong>{analysis_data['signal_strength']}</strong> 的采购信号。</span></li>
         '''
     else: # 如果是观望
-        # 构建未满足条件的列表
         unmet_conditions_list = ''
         if not analysis_data['current_conditions_met']['cond1']:
             unmet_conditions_list += f'<li>核心工业指标: {analysis_data["indicator_diff_desc"]}.</li>'
@@ -1121,28 +1211,27 @@ if __name__ == "__main__":
             unmet_conditions_list += f'<li>EMA比率({analysis_data["ema_ratio"]:.3f}) 未达动态阈值({analysis_data["dynamic_ema_threshold"]:.3f}).</li>'
         if not analysis_data['current_conditions_met']['cond6']:
             unmet_conditions_list += f'<li>波动性({analysis_data["volatility"]:.3f}) 高于动态阈值({analysis_data["vol_threshold"]:.3f}).</li>'
-        
-        if not unmet_conditions_list: # 如果所有条件都满足但仍然观望，说明是阻断
+
+        if not unmet_conditions_list:
              unmet_conditions_list = "<li>所有核心条件均满足，观望是由于信号阻断规则。</li>"
-             
+
         today_interpretation_html += f'<li>当前未能满足买入要求的主要条件：<ul>{unmet_conditions_list}</ul></li>'
-        
-        # 构建结论文本
-        blocking_issues = analysis_data['block_reasons'] # 现在只包含明确阻断原因
+
+        blocking_issues = analysis_data['block_reasons']
         conclusion_text = ''
         if blocking_issues:
             conclusion_text = '信号因以下规则被阻断：' + '； '.join(blocking_issues) + '。'
         elif not analysis_data['base_req_met']:
              conclusion_text = f"由于仅满足 {analysis_data['condition_scores']}/6 项核心条件，未能达到策略要求的最低数量。"
-        else: 
+        else:
             conclusion_text = f"虽满足 {analysis_data['condition_scores']}/6 项核心条件，但可能存在其他未明确的阻断因素。"
-            
+
         today_interpretation_html += f'<li><strong>结论：</strong><span style="color:red;">{conclusion_text} 因此，策略建议暂时持币观望。</span></li>'
 
-    today_interpretation_html += '</ul>' # 闭合原因分析的 <ul>
-    # --- 6.1 结束预构建 --- 
-    
-    # --- 6.2 构建最终 HTML，插入预构建的部分 --- 
+    today_interpretation_html += '</ul>'
+    # --- 6.1 结束预构建 ---
+
+    # --- 6.2 构建最终 HTML，插入预构建的部分 ---
     final_html = f"""
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -1190,17 +1279,18 @@ if __name__ == "__main__":
                         <li><u>短期均线 (橙虚线)</u>: 计算指定周期内（例如{BASE_WINDOW_SHORT}天，根据策略动态调整）收盘价的算术平均值。它能平滑短期价格波动，帮助识别近期趋势方向。价格穿越均线常被视为趋势可能改变的信号。</li>
                         <li><u>EMA线 (红/绿细线)</u>: 指数移动平均线。与普通均线类似，但对更近期的价格赋予更高权重。这意味着EMA对价格变化的反应比普通均线更快，常用于捕捉更短期的趋势变化。</li>
                         <li><u>采购信号 (▲ 红三角)</u>: 当下方描述的所有策略买入条件均满足时，此标记出现。</li>
+                        <li><u>EMA交叉 (↑ 绿 / ↓ 红)</u>: 标记EMA9线与EMA21线发生视觉交叉的确切位置。↑代表金叉(EMA9上穿)，↓代表死叉(EMA9下穿)。</li>
                     </ul>
                 </li>
                 <li><strong>中图 (策略核心指标):</strong>
                     <ul>
-                        <li><u>核心工业指标 (蓝色实线)</u>: 这是本策略定制的一个综合指标。其计算综合考虑了当前价格与其短期、长期移动平均线的偏离程度，并结合了近期市场波动性（通过"动量因子"衡量）。其核心思想是：当价格相对其历史均值偏低，且市场波动性不高时，该指标值会较低，策略倾向于认为此时潜在的买入价值可能更高。</li>
-                        <li><u>阈值线 (红色虚线等)</u>: 这些是根据近期"核心工业指标"的历史分布动态计算出来的参考线（通常是某个分位数，如25%分位数）。它们代表了策略认为的"相对便宜"的区域边界。当蓝色指标线低于关键的红色阈值线时，满足了策略的一个主要入场条件。</li>
+                        <li><u>核心工业指标 (蓝色实线)</u>: 这是本策略定制的一个综合指标。其计算综合考虑了当前价格与其短期、长期移动平均线的偏离程度，并结合了近期市场波动性（通过\"动量因子\"衡量）。其核心思想是：当价格相对其历史均值偏低，且市场波动性不高时，该指标值会较低，策略倾向于认为此时潜在的买入价值可能更高。</li>
+                        <li><u>阈值线 (红色虚线等)</u>: 这些是根据近期\"核心工业指标\"的历史分布动态计算出来的参考线（通常是某个分位数，如25%分位数）。它们代表了策略认为的\"相对便宜\"的区域边界。当蓝色指标线低于关键的红色阈值线时，满足了策略的一个主要入场条件。</li>
                     </ul>
                 </li>
                 <li><strong>下图 (市场动量指标 - RSI):</strong>
                     <ul>
-                        <li><u>修正RSI (紫色实线)</u>: 相对强弱指数（Relative Strength Index）。它通过比较一定时期内（通常是14天）价格上涨日和下跌日的平均涨跌幅度，来衡量市场买卖双方的力量对比，反映市场的景气程度。RSI的值域在0-100之间。通常认为，当RSI低于某个阈值（如此策略中的45）时，市场可能处于"超卖"状态，即下跌可能过度，短期内价格有反弹的可能性；反之，高于某个阈值（如70或80）则可能表示"超买"。策略利用RSI的超卖信号作为另一个关键的入场条件。</li>
+                        <li><u>修正RSI (紫色实线)</u>: 相对强弱指数（Relative Strength Index）。它通过比较一定时期内（通常是14天）价格上涨日和下跌日的平均涨跌幅度，来衡量市场买卖双方的力量对比，反映市场的景气程度。RSI的值域在0-100之间。通常认为，当RSI低于某个阈值（如此策略中的45）时，市场可能处于\"超卖\"状态，即下跌可能过度，短期内价格有反弹的可能性；反之，高于某个阈值（如70或80）则可能表示\"超买\"。策略利用RSI的超卖信号作为另一个关键的入场条件。</li>
                     </ul>
                 </li>
             </ul>
@@ -1211,7 +1301,6 @@ if __name__ == "__main__":
                 <li><strong>无信号阻断：</strong>排除近期不利价格形态、ATR超买以及过于频繁的信号（需满足最小间隔天数，当前为{analysis_data['min_purchase_interval']}天）。</li>
             </ol>
 
-            <!-- 插入预先构建好的今日解读 HTML -->
             {today_interpretation_html}
         </div>
     </div>
@@ -1219,83 +1308,90 @@ if __name__ == "__main__":
 </html>
 """
 
-    # 7. 将完整的 HTML 写入文件
-    output_filename = "index.html" # 确认输出文件名是 index.html
+    # 7. 将完整的 HTML 写入文件 (主报告)
+    output_filename = "index.html"
     try:
         with open(output_filename, 'w', encoding='utf-8') as f:
             f.write(final_html)
-        print(f"成功将报告写入文件: {output_filename}")
-
-        # 8. 自动执行 Git 命令推送到 GitHub
-        print("尝试将更新推送到 GitHub...")
-        try:
-            # 定义 Git 命令 (Add 和 Commit)
-            commit_message = f"Update report - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            files_to_add = [output_filename, ".gitignore", __file__]
-            add_cmd = ["git", "add"] + files_to_add
-            commit_cmd = ["git", "commit", "-m", commit_message]
-            push_cmd = ["git", "push", "origin", "master"] # 单独定义 Push 命令
-
-            # --- 执行 Add --- 
-            print(f"执行命令: {' '.join(add_cmd)}")
-            add_result = subprocess.run(add_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
-            if add_result.stdout: print(f"Git 输出:\n{add_result.stdout.strip()}")
-            if add_result.stderr: print(f"Git 错误:\n{add_result.stderr.strip()}")
-            if add_result.returncode != 0:
-                print(f"Git add 命令执行失败，返回码: {add_result.returncode}。停止。")
-            else:
-                # --- 执行 Commit --- 
-                print(f"执行命令: {' '.join(commit_cmd)}")
-                commit_result = subprocess.run(commit_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
-                commit_success = False # 标记 Commit 是否成功
-                if commit_result.stdout: print(f"Git 输出:\n{commit_result.stdout.strip()}")
-                if commit_result.stderr:
-                    if "nothing to commit" in commit_result.stderr:
-                        print(f"Git 信息 (可忽略): {commit_result.stderr.strip()}")
-                        commit_success = True # 没有东西提交也视为一种成功，可以尝试推送
-                    else:
-                         print(f"Git 错误:\n{commit_result.stderr.strip()}")
-                # 检查返回码，如果为0，则认为成功
-                if commit_result.returncode == 0:
-                    commit_success = True
-
-                if not commit_success:
-                    print(f"Git commit 命令执行失败，返回码: {commit_result.returncode}。停止。")
-                else:
-                    # --- 执行 Push (无限重试直到成功) --- 
-                    print(f"尝试推送: {' '.join(push_cmd)}")
-                    while True:
-                        push_result = subprocess.run(push_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
-                        push_succeeded = False
-                        push_stderr = push_result.stderr.strip() if push_result.stderr else ""
-
-                        if push_result.stdout: print(f"Git 输出:\n{push_result.stdout.strip()}")
-                        if push_stderr:
-                            # Everything up-to-date 也视为成功
-                            if "Everything up-to-date" in push_stderr or "up-to-date" in push_stderr:
-                                print(f"Git 信息: {push_stderr}")
-                                push_succeeded = True
-                            else:
-                                print(f"Git 错误:\n{push_stderr}")
-                        
-                        # 检查返回码是否为 0
-                        if push_result.returncode == 0:
-                            push_succeeded = True
-
-                        if push_succeeded:
-                            print("推送成功或无需推送。")
-                            break # 跳出无限循环
-                        else:
-                            print(f"推送失败 (返回码: {push_result.returncode})，自动重试...")
-                            # 无需 time.sleep，直接进入下一次循环尝试
-
-        except FileNotFoundError:
-            print("错误：找不到 'git' 命令。请确保 Git 已安装并添加到系统 PATH。")
-        except Exception as git_e:
-            print(f"错误：执行 Git 命令时出错: {git_e}")
-
+        print(f"成功将主报告写入文件: {output_filename}")
     except Exception as e:
-        print(f"错误：写入 HTML 文件失败: {e}")
+        print(f"错误：写入主 HTML 文件失败: {e}")
+
+    # --- 新增：生成并保存回测图表 ---
+    print("正在生成回测对比图表...")
+    try:
+        # 定义定投间隔（例如大约每月一次，假设21个交易日）
+        dca_trading_day_interval = 21
+        # 需要传递 df 的副本，因为它可能在 generate_report 中被修改 (fillna)
+        backtest_fig = create_backtest_visualization(df.copy(), dca_interval=dca_trading_day_interval)
+        backtest_filename = "backtest_report.html"
+        # 使用 pio.write_html 直接写入完整 HTML 文件
+        pio.write_html(backtest_fig, backtest_filename, auto_open=False, include_plotlyjs='cdn')
+        print(f"成功将回测对比图表写入文件: {backtest_filename}")
+    except Exception as e:
+        print(f"错误：生成或保存回测图表失败: {e}")
+    # --- 结束新增 ---
+
+    # 8. 自动执行 Git 命令推送到 GitHub
+    # ... (Git 推送代码保持不变) ...
+    print("尝试将更新推送到 GitHub...")
+    try:
+        commit_message = f"Update report - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        files_to_add = [output_filename, backtest_filename, ".gitignore", __file__] # 添加回测文件名
+        add_cmd = ["git", "add"] + files_to_add
+        commit_cmd = ["git", "commit", "-m", commit_message]
+        push_cmd = ["git", "push", "origin", "master"]
+
+        print(f"执行命令: {' '.join(add_cmd)}")
+        add_result = subprocess.run(add_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+        if add_result.stdout: print(f"Git 输出:\n{add_result.stdout.strip()}")
+        if add_result.stderr: print(f"Git 错误:\n{add_result.stderr.strip()}")
+        if add_result.returncode != 0:
+            print(f"Git add 命令执行失败，返回码: {add_result.returncode}。停止。")
+        else:
+            print(f"执行命令: {' '.join(commit_cmd)}")
+            commit_result = subprocess.run(commit_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+            commit_success = False
+            if commit_result.stdout: print(f"Git 输出:\n{commit_result.stdout.strip()}")
+            if commit_result.stderr:
+                if "nothing to commit" in commit_result.stderr or "no changes added to commit" in commit_result.stderr: # 兼容不同 Git 版本信息
+                    print(f"Git 信息 (可忽略): {commit_result.stderr.strip()}")
+                    commit_success = True
+                else:
+                     print(f"Git 错误:\n{commit_result.stderr.strip()}")
+            if commit_result.returncode == 0:
+                commit_success = True
+
+            if not commit_success and "nothing to commit" not in (commit_result.stderr or ""): # 再次确认非空提交错误
+                 print(f"Git commit 命令执行失败，返回码: {commit_result.returncode}。停止。")
+            else:
+                print(f"尝试推送: {' '.join(push_cmd)}")
+                while True:
+                    push_result = subprocess.run(push_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+                    push_succeeded = False
+                    push_stderr = push_result.stderr.strip() if push_result.stderr else ""
+
+                    if push_result.stdout: print(f"Git 输出:\n{push_result.stdout.strip()}")
+                    if push_stderr:
+                        if "Everything up-to-date" in push_stderr or "up-to-date" in push_stderr:
+                            print(f"Git 信息: {push_stderr}")
+                            push_succeeded = True
+                        else:
+                            print(f"Git 错误:\n{push_stderr}")
+
+                    if push_result.returncode == 0:
+                        push_succeeded = True
+
+                    if push_succeeded:
+                        print("推送成功或无需推送。")
+                        break
+                    else:
+                        print(f"推送失败 (返回码: {push_result.returncode})，自动重试...")
+
+    except FileNotFoundError:
+        print("错误：找不到 'git' 命令。请确保 Git 已安装并添加到系统 PATH。")
+    except Exception as git_e:
+        print(f"错误：执行 Git 命令时出错: {git_e}")
 
 
     print("分析完成。")
