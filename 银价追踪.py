@@ -10,6 +10,7 @@ import subprocess # 用于执行 Git 命令
 import datetime # 用于生成提交信息时间戳
 import optuna # <--- 新增: 导入 Optuna
 import traceback # <--- 新增：用于打印详细错误信息
+import time
 
 # --- 保留用于查找数据文件的打包相关代码 ---
 # (虽然我们不再打包成 EXE, 但保留此逻辑无害，且万一以后需要此脚本在打包环境运行其他任务时有用)
@@ -1534,7 +1535,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"错误：写入主 HTML 文件失败: {e}")
 
-    # 8. 自动执行 Git 命令推送到 GitHub
+    # 8. 自动执行 Git 命令推送到 GitHub (带无限重试，无等待)
     print("尝试将更新推送到 GitHub...")
     try:
         # 检查是否有未提交的更改
@@ -1559,40 +1560,63 @@ if __name__ == "__main__":
                 raise ValueError("无法获取当前 Git 分支名称。")
             print(f"检测到当前分支为: {current_branch}")
 
-            # 4. 推送到远程仓库的当前分支
-            # --- 注意：确保你有权限推送到该仓库，并且可能需要配置凭据 ---
-            print(f"尝试推送到 origin/{current_branch}...")
-            push_result = subprocess.run(['git', 'push', 'origin', current_branch], capture_output=True, text=True, check=True, encoding='utf-8')
-            print("Git 推送成功。")
+            # 4. 推送到远程仓库的当前分支 (无限重试，无等待)
+            push_attempt = 0
+            while True: # 无限循环直到成功
+                push_attempt += 1
+                try:
+                    print(f"尝试推送到 origin/{current_branch} (尝试 #{push_attempt})...")
+                    # 增加超时设置 (例如 60 秒) 防止单次尝试卡死
+                    push_result = subprocess.run(
+                        ['git', 'push', 'origin', current_branch],
+                        capture_output=True, text=True, check=True, encoding='utf-8', timeout=60
+                    )
+                    print("Git 推送成功。")
+                    break # 成功则跳出无限循环
 
+                except subprocess.TimeoutExpired:
+                    print(f"Git push 超时 (尝试 #{push_attempt})。将立即重试...")
+                    # 不等待，直接进入下一次循环
+
+                except subprocess.CalledProcessError as push_error:
+                    stderr_output = push_error.stderr.strip() if push_error.stderr else "无标准错误输出"
+                    print(f"Git push 失败 (尝试 #{push_attempt})。错误: {stderr_output}")
+                    # 根据错误判断是否应该停止重试 (可选，但推荐)
+                    if "Authentication failed" in stderr_output or "repository not found" in stderr_output or "fatal: repository" in stderr_output:
+                         print("检测到认证、仓库未找到或严重错误，停止重试。请手动检查配置。")
+                         # 这里可以选择抛出异常，让脚本知道推送最终失败
+                         raise RuntimeError(f"Git push failed due to configuration or permission issue: {stderr_output}")
+                         # 或者直接 break，让脚本继续往下执行（但不推荐，因为推送未完成）
+                         # break
+                    print("将立即重试...")
+                    # 不等待，直接进入下一次循环
+
+                except Exception as inner_e: # 捕捉推送过程中的其他意外错误
+                    print(f"推送过程中发生意外错误 (尝试 #{push_attempt}): {inner_e}")
+                    print("将立即重试...")
+                    # 不等待，直接进入下一次循环
+
+    # 处理 Git status/add/commit/rev-parse 阶段的错误
     except subprocess.CalledProcessError as e:
-        # 改进错误处理，特别是针对推送错误
         cmd_str = ' '.join(e.cmd) if e.cmd else 'N/A'
-        print(f"Git 命令执行错误: {e}")
+        print(f"Git 命令执行错误 (非推送阶段): {e}")
         print(f"命令: {cmd_str}")
         print(f"返回码: {e.returncode}")
-        # 只打印标准错误输出，因为它通常包含最有用的信息
         if e.stderr:
-            print(f"错误输出: {e.stderr.strip()}") 
-            # 提供更具体的提示
-            if 'push' in cmd_str:
-                if "src refspec" in e.stderr and "does not match any" in e.stderr:
-                    print("提示：推送失败，因为本地分支名称与远程不匹配或本地不存在此分支。")
-                elif "rejected" in e.stderr:
-                    print("提示：推送被远程仓库拒绝。通常需要先执行 'git pull' 拉取远程更新。")
-                elif "Authentication failed" in e.stderr or "could not read Username" in e.stderr:
-                    print("提示：Git 认证失败。请检查您的凭据（HTTPS token 或 SSH key）是否配置正确且有效。")
-                elif "repository not found" in e.stderr:
-                    print("提示：远程仓库未找到。请检查仓库 URL 是否正确以及您是否有访问权限。")
-                else:
-                    print("提示：发生未知的推送错误，请检查上面的详细错误输出。")
+            print(f"错误输出: {e.stderr.strip()}")
+            # 保留之前的详细错误提示
+            if "Authentication failed" in e.stderr or "could not read Username" in e.stderr:
+                print("提示：Git 认证失败。请检查您的凭据（HTTPS token 或 SSH key）是否配置正确且有效。")
+            elif "repository not found" in e.stderr:
+                print("提示：远程仓库未找到。请检查仓库 URL 是否正确以及您是否有访问权限。")
         elif e.stdout:
-             print(f"输出: {e.stdout.strip()}") # 如果没有 stderr，显示 stdout
+             print(f"输出: {e.stdout.strip()}")
+
     except FileNotFoundError:
         print("错误：未找到 'git' 命令。请确保 Git 已安装并添加到系统 PATH。")
     except Exception as e:
-        print(f"执行 Git 命令时发生未知错误: {e}")
-
+        # 捕获 ValueError 或其他未知错误
+        print(f"执行 Git 命令或处理过程中发生未知错误: {e}")
 
     print("\n分析完成。")
 
