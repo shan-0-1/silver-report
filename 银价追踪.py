@@ -79,7 +79,7 @@ WINDOW_WEIGHT_FACTOR = 0.8  # 窗口参数在决策中的权重占比
 WINDOW_CHANGE_THRESHOLD = 0.2  # 窗口变化显著阈值
 
 
-def calculate_strategy(df, baseline_quantile=0.25): # 添加默认参数
+def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加默认参数
     """优化后的策略计算核心"""
     # 计算自上次采购以来的天数
     df['signal_flag'] = df['采购信号'].astype(int)
@@ -302,7 +302,7 @@ def calculate_strategy(df, baseline_quantile=0.25): # 添加默认参数
     return df
 
 
-def generate_signals(df, rsi_threshold=45): # 添加默认参数
+def generate_signals(df, rsi_threshold=33): # 添加默认参数
     """整合所有条件到核心条件"""
     df = df.assign(采购信号=False) if '采购信号' not in df.columns else df
 
@@ -1246,61 +1246,6 @@ if __name__ == "__main__":
     print("正在加载数据...")
     df_main = load_silver_data() # 使用新变量名以示区分
 
-    # --- 新增: 定义并创建早停回调 (注释掉 Optuna 相关) ---
-    # class EarlyStoppingCallback:
-    #     def __init__(self, patience: int):
-    #         self.patience = patience
-    #         self.best_value = float('inf') # 或者对于最大化问题是 -float('inf')
-    #         self.counter = 0
-    #
-    #     def __call__(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial) -> None:
-    #         # 仅当试验成功完成时才检查
-    #         if trial.state == optuna.trial.TrialState.COMPLETE:
-    #             current_value = trial.value
-    #             if current_value is not None: # 确保值存在
-    #                 if current_value < self.best_value:
-    #                     self.best_value = current_value
-    #                     self.counter = 0
-    #                 else:
-    #                     self.counter += 1
-    #
-    #                 if self.counter >= self.patience:
-    #                     print(f"触发早停：连续 {self.patience} 次试验没有改进。")
-    #                     study.stop()
-    #
-    # early_stopping_patience = 25 # 连续多少次没有改进就停止
-    # early_stopping_callback = EarlyStoppingCallback(patience=early_stopping_patience)
-    # --- 结束新增 ---
-
-    # --- 执行 Optuna 优化 (注释掉) ---
-    # print("\n开始执行参数优化 (带早停)...") # 更新提示
-    # study = optuna.create_study(direction='minimize')
-    # try:
-    #     # 使用 lambda 传递原始 df 数据给 objective 函数
-    #     study.optimize(lambda trial: objective(trial, df_original=df_main.copy()),
-    #                    n_trials=100, # <--- 新增：设置目标试验次数以启用进度条
-    #                    callbacks=[early_stopping_callback], # 只保留 callbacks
-    #                    show_progress_bar=True) # 显示进度条
-    #
-    #     print("\n参数优化完成!")
-    #     if study.best_trial:
-    #         print("找到的最佳试验:")
-    #         print(f"  数值 (最低平均采购成本): {study.best_trial.value:.4f}")
-    #         print("  最佳参数组合: ")
-    #         for key, value in study.best_trial.params.items():
-    #             # 格式化输出
-    #             if isinstance(value, float):
-    #                 print(f"    {key}: {value:.4f}")
-    #             else:
-    #                 print(f"    {key}: {value}")
-    #         # --- 删除误导性提示 ---
-    #     else:
-    #         print("未能找到有效的试验结果。可能是所有试验都出错或未产生购买信号。")
-    #
-    # except Exception as opt_e:
-    #     print(f"Optuna 优化过程中遇到未处理错误: {opt_e}")
-    # --- 结束 Optuna 优化 ---
-
     # --- 获取优化后的参数 (注释掉 Optuna 获取逻辑, 使用指定值) ---
     # ... (注释掉的 if/else 块保持不变) ...
     # --- 修改：直接设置指定的固定参数 --- 
@@ -1489,21 +1434,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"错误：写入主 HTML 文件失败: {e}")
 
-    # --- 生成并保存回测图表 (注释掉) ---
-    # print("正在生成回测对比图表...")
-    # try:
-    #     dca_trading_day_interval = 21
-    #     # --- 修改：传递优化后的参数 --- 
-    #     backtest_fig = create_backtest_visualization(df_report.copy(), 
-    #                                                dca_interval=dca_trading_day_interval, 
-    #                                                optimized_quantile=optimized_quantile, 
-    #                                                optimized_rsi_threshold=optimized_rsi_threshold)
-    #     backtest_filename = "backtest_report.html"
-    #     pio.write_html(backtest_fig, backtest_filename, auto_open=False, include_plotlyjs='cdn')
-    #     print(f"成功将回测对比图表写入文件: {backtest_filename}")
-    # except Exception as e:
-    #     print(f"错误：生成或保存回测图表失败: {e}")
-
     # 8. 自动执行 Git 命令推送到 GitHub
     print("尝试将更新推送到 GitHub...")
     try:
@@ -1522,17 +1452,42 @@ if __name__ == "__main__":
             commit_result = subprocess.run(['git', 'commit', '-m', commit_message], capture_output=True, text=True, check=True, encoding='utf-8')
             print("Git 提交成功。")
 
-            # 3. 推送到远程仓库 (假设远程名为 origin，分支为 main)
+            # 3. 获取当前分支名称
+            get_branch_result = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], capture_output=True, text=True, check=True, encoding='utf-8')
+            current_branch = get_branch_result.stdout.strip()
+            if not current_branch:
+                raise ValueError("无法获取当前 Git 分支名称。")
+            print(f"检测到当前分支为: {current_branch}")
+
+            # 4. 推送到远程仓库的当前分支
             # --- 注意：确保你有权限推送到该仓库，并且可能需要配置凭据 ---
-            push_result = subprocess.run(['git', 'push', 'origin', 'main'], capture_output=True, text=True, check=True, encoding='utf-8')
+            print(f"尝试推送到 origin/{current_branch}...")
+            push_result = subprocess.run(['git', 'push', 'origin', current_branch], capture_output=True, text=True, check=True, encoding='utf-8')
             print("Git 推送成功。")
 
     except subprocess.CalledProcessError as e:
+        # 改进错误处理，特别是针对推送错误
+        cmd_str = ' '.join(e.cmd) if e.cmd else 'N/A'
         print(f"Git 命令执行错误: {e}")
-        print(f"命令: {e.cmd}")
+        print(f"命令: {cmd_str}")
         print(f"返回码: {e.returncode}")
-        print(f"输出: {e.stdout}")
-        print(f"错误输出: {e.stderr}")
+        # 只打印标准错误输出，因为它通常包含最有用的信息
+        if e.stderr:
+            print(f"错误输出: {e.stderr.strip()}") 
+            # 提供更具体的提示
+            if 'push' in cmd_str:
+                if "src refspec" in e.stderr and "does not match any" in e.stderr:
+                    print("提示：推送失败，因为本地分支名称与远程不匹配或本地不存在此分支。")
+                elif "rejected" in e.stderr:
+                    print("提示：推送被远程仓库拒绝。通常需要先执行 'git pull' 拉取远程更新。")
+                elif "Authentication failed" in e.stderr or "could not read Username" in e.stderr:
+                    print("提示：Git 认证失败。请检查您的凭据（HTTPS token 或 SSH key）是否配置正确且有效。")
+                elif "repository not found" in e.stderr:
+                    print("提示：远程仓库未找到。请检查仓库 URL 是否正确以及您是否有访问权限。")
+                else:
+                    print("提示：发生未知的推送错误，请检查上面的详细错误输出。")
+        elif e.stdout:
+             print(f"输出: {e.stdout.strip()}") # 如果没有 stderr，显示 stdout
     except FileNotFoundError:
         print("错误：未找到 'git' 命令。请确保 Git 已安装并添加到系统 PATH。")
     except Exception as e:
