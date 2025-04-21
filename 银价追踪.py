@@ -515,7 +515,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         'signal': "综合所有核心条件和阻断规则得出的最终建议。",
         'dynamic_window': f"计算思路: 基准窗口({BASE_WINDOW_SHORT}/{BASE_WINDOW_LONG}天)根据距离上次购买天数进行衰减({WINDOW_DECAY_RATE}率)，最短{MIN_WINDOW_SHORT}天。距离越久，窗口越短，越灵敏。",
         'price_trend': "计算思路: (当前价格 / 短期动态均线 - 1) * 100%。表示价格偏离近期平均成本的程度。",
-        'volatility': f"计算思路: 最近{{dynamic_short_window_val}}天内每日价格变化百分比绝对值的平均值。此指标衡量价格波动的剧烈程度（即近期波动率），值越低表示市场越平静。注意：名称可能易误导，它主要反映波动性而非趋势动量。", # 使用占位符
+        'volatility': f"计算思路: 最近 {int(current.get('动态短窗口', BASE_WINDOW_SHORT))} 天内每日价格变化百分比绝对值的平均值。此指标衡量价格波动的剧烈程度（即近期波动率），值越低表示市场越平静。注意：名称可能易误导，它主要反映波动性而非趋势动量。",
         'core_cond1': f"工业指标 ({indicator:.2f}) 是否低于基线阈值 ({threshold:.2f})？",
         # --- 修改：在描述中加入 rsi 参数 --- 
         'core_cond2': f"修正RSI ({rsi:.1f}) 是否低于 {optimized_rsi_threshold}？RSI通过计算一定时期内上涨日和下跌日的平均涨跌幅得到，衡量买卖力量，低于此值表示超卖。",
@@ -524,10 +524,10 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         'core_cond5': f"EMA9/EMA21比率 ({ema_ratio:.3f}) 是否大于动态阈值 ({dynamic_threshold:.3f})？该阈值会根据波动性调整。",
         'core_cond6': f"动量因子 ({volatility:.3f}) 是否低于其动态阈值 ({vol_threshold:.3f})？该阈值是动量因子自身的45日35%分位数。",
         'cond_score': f"满足以上6个核心条件的数量（部分条件阈值可能已优化），至少需要满足4个才能初步考虑买入。", # 更新提示
-        'peak_filter': f"一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({{atr_upper_val:.2f}})80%以上位置，用于排除一些潜在的顶部信号。", # 使用占位符
+        'peak_filter': f"一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨80%以上位置，用于排除一些潜在的顶部信号。",
         'interval': f"距离上次系统发出买入信号的天数，要求至少间隔 {MIN_PURCHASE_INTERVAL} 天才能再次买入。",
         'window_decay': "显示当前动态短窗口相比基准窗口缩短了多少天，反映了衰减机制的效果。",
-        'ema_trend': f"基于EMA9({{ema9_val:.2f}}), EMA21({{ema21_val:.2f}}), EMA50({{ema50_val:.2f}})的相对位置判断短期趋势。当EMA9>EMA21且EMA21>EMA50时为多头，反之为空头。", # 使用占位符
+        'ema_trend': f"基于EMA9, EMA21, EMA50的相对位置判断短期趋势。当EMA9>EMA21且EMA21>EMA50时为多头，反之为空头。",
         'final_block': "总结导致最终未能产生买入信号的具体原因。",
         '3day_change': "最近三个交易日的价格变化绝对值和方向。",
         'ema_crossover': "基于 EMA9 和 EMA21 的直接相对位置。金叉状态 (EMA9 > EMA21) 通常视为看涨倾向，死叉状态 (EMA9 < EMA21) 通常视为看跌倾向。图表上的标记 (↑/↓) 显示精确的交叉点。" # 新增EMA交叉解释
@@ -625,7 +625,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     atr_overbought = atr_value > 80
     atr_status_text = '<span style="color:red;">超买区域 (>80%)</span>' if atr_overbought else f'{atr_value:.1f}%'
     # 简化 title 属性的引号
-    report_html += f"<li title='{HOVER_TEXTS['peak_filter'].replace('\"','&quot;')}'>价格形态/ATR过滤：形态 {peak_status_text} | ATR通道位置 {atr_status_text}</li>"
+    report_html += f"<li title='一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：形态 {peak_status_text} | ATR通道位置 {atr_status_text}</li>"
 
     last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
     interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
@@ -640,8 +640,11 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
     ema_trend_val = current.get('EMA趋势', 0)
     ema_trend_text = '<span style="color:green;">多头</span>' if ema_trend_val == 1 else '<span style="color:red;">空头</span>' if ema_trend_val == -1 else "震荡"
-    # 简化 title 属性的引号
-    report_html += f"<li title='{HOVER_TEXTS['ema_trend'].replace('\"','&quot;')}'>EMA趋势状态：{ema_trend_text}</li>"
+    # 原来的代码类似:
+    # report_html += f"<li title='{HOVER_TEXTS['ema_trend'].replace('\"','&quot;')}'>EMA趋势状态：{ema_trend_text}</li>"
+    
+    # 修改为 (注意格式化 ema9, ema21, ema50):
+    report_html += f"<li title='基于EMA9({ema9:.2f}), EMA21({ema21:.2f}), EMA50({ema50:.2f})的相对位置判断短期趋势。当EMA9>EMA21且EMA21>EMA50时为多头，反之为空头。'>EMA趋势状态：{ema_trend_text}</li>"
 
     report_html += "</ul>"
 
