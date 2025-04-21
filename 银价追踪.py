@@ -8,6 +8,8 @@ from plotly.subplots import make_subplots
 import plotly.io as pio # 引入 plotly.io 用于 HTML 导出
 import subprocess # 用于执行 Git 命令
 import datetime # 用于生成提交信息时间戳
+import optuna # <--- 新增: 导入 Optuna
+import traceback # <--- 新增：用于打印详细错误信息
 
 # --- 保留用于查找数据文件的打包相关代码 ---
 # (虽然我们不再打包成 EXE, 但保留此逻辑无害，且万一以后需要此脚本在打包环境运行其他任务时有用)
@@ -16,17 +18,17 @@ if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # 获取脚本所在目录
 
-# 策略参数优化
+# 策略参数优化 (保留原始值作为默认)
+# --- 注意：Optuna 将会覆盖这些用于优化的值 ---
 BASE_WINDOW_SHORT = 30
 BASE_WINDOW_LONG = 90
 MIN_WINDOW_SHORT = 5
 WINDOW_DECAY_RATE = 0.9
 MIN_PURCHASE_INTERVAL = 1
 
-# 在参数定义区域新增窗口设定
-HISTORY_WINDOW_SHORT = 24  # 新增短期窗口
-HISTORY_WINDOW = HISTORY_WINDOW_SHORT * 2        # 原中型窗口保留
-HISTORY_WINDOW_LONG = HISTORY_WINDOW * 2   # 新增长期窗口
+HISTORY_WINDOW_SHORT = 24
+HISTORY_WINDOW = HISTORY_WINDOW_SHORT * 2
+HISTORY_WINDOW_LONG = HISTORY_WINDOW * 2
 
 
 def load_silver_data():
@@ -77,7 +79,7 @@ WINDOW_WEIGHT_FACTOR = 0.8  # 窗口参数在决策中的权重占比
 WINDOW_CHANGE_THRESHOLD = 0.2  # 窗口变化显著阈值
 
 
-def calculate_strategy(df):
+def calculate_strategy(df, baseline_quantile=0.25): # 添加默认参数
     """优化后的策略计算核心"""
     # 计算自上次采购以来的天数
     df['signal_flag'] = df['采购信号'].astype(int)
@@ -157,21 +159,21 @@ def calculate_strategy(df):
     # --- 结束分母检查 ---
 
 
-    # 动态阈值计算（滚动分位数）
+    # 动态阈值计算（滚动分位数）- 使用传入的参数
     df['基线阈值_短'] = df['工业指标'].rolling(
         HISTORY_WINDOW_SHORT,
         min_periods=2
-    ).quantile(0.25).ffill().clip(0.3, 2.0)
+    ).quantile(baseline_quantile).ffill().clip(0.3, 2.0) # <--- 使用参数
 
     df['基线阈值'] = df['工业指标'].rolling(
         HISTORY_WINDOW,
         min_periods=2
-    ).quantile(0.25).ffill().clip(0.3, 2.0)
+    ).quantile(baseline_quantile).ffill().clip(0.3, 2.0) # <--- 使用参数
 
     df['基线阈值_长'] = df['工业指标'].rolling(
         HISTORY_WINDOW_LONG,
         min_periods=2
-    ).quantile(0.25).ffill().clip(0.3, 2.0)
+    ).quantile(baseline_quantile).ffill().clip(0.3, 2.0) # <--- 使用参数
 
     # 新增波动率通道指标
     df['ATR'] = df['Price'].rolling(14).apply(lambda x: np.max(x) - np.min(x) if len(x)>1 else 0).shift(1).fillna(0)
@@ -195,8 +197,10 @@ def calculate_strategy(df):
 
     # --- 新增：直接比较 EMA9 和 EMA21 用于视觉交叉判断 --- 
     # 填充 EMA 计算初期的 NaN 值，避免比较错误
-    df['EMA9'].fillna(method='bfill', inplace=True)
-    df['EMA21'].fillna(method='bfill', inplace=True)
+    # --- 修改：使用 .bfill() 并赋值回原列 --- 
+    df['EMA9'] = df['EMA9'].bfill()
+    df['EMA21'] = df['EMA21'].bfill()
+    # --- 结束修改 --- 
     df['ema9_above_ema21'] = df['EMA9'] > df['EMA21']
     # --- 结束新增 --- 
 
@@ -290,37 +294,38 @@ def calculate_strategy(df):
             print(f"警告：列 '{col}' 不存在于 DataFrame 中，跳过数值转换。")
 
     # 填充计算中可能产生的 NaN
-    df.fillna(method='ffill', inplace=True) # 可以选择更合适的填充策略
-    df.fillna(method='bfill', inplace=True)
+    df = df.ffill() # 使用 .ffill() 代替 fillna(method='ffill')
+    df = df.bfill() # 使用 .bfill() 代替 fillna(method='bfill')
     # 提供更具体的填充值
-    df.fillna({'修正RSI': 50, '动量因子': 0, 'ATR': 0, '波动上轨': df['Price'], '波动下轨': df['Price']}, inplace=True)
+    df = df.fillna({'修正RSI': 50, '动量因子': 0, 'ATR': 0, '波动上轨': df['Price'], '波动下轨': df['Price']})
 
     return df
 
 
-def generate_signals(df):
+def generate_signals(df, rsi_threshold=45): # 添加默认参数
     """整合所有条件到核心条件"""
     df = df.assign(采购信号=False) if '采购信号' not in df.columns else df
 
     # --- 在进行比较前处理可能的 NaN ---
     # (calculate_strategy 中已添加填充逻辑，这里作为双重保障)
-    df.fillna({
+    # --- 修改: 使用赋值代替 inplace=True ---
+    df = df.fillna({
         '工业指标': 1.0, '基线阈值': 1.0, '修正RSI': 50, 'Price': df['Price'].median(),
         'EMA21': df['Price'].median(), '布林下轨': df['Price'].median() * 0.9,
         'ema_ratio': 1.0, 'dynamic_ema_threshold': 1.0, '动量因子': 0.01, '低波动阈值': 0.01
-    }, inplace=True)
+    })
+    # --- 结束修改 ---
     # --- 结束 NaN 处理 ---
 
     # 合并后的核心条件(原基础+增强)
     try:
-        # --- 添加缩进 ---
         core_conditions = [
-            df['工业指标'] < df['基线阈值'],            # 原核心条件1
-            df['修正RSI'] < 45,                       # 原核心条件2
-            df['Price'] < df['EMA21'],                # 原核心条件3
-            df['Price'] < df['布林下轨'] * 1.05,       # 原核心条件4
-            df['ema_ratio'] > df['dynamic_ema_threshold'],  # 原增强条件1
-            df['动量因子'] < df['低波动阈值']            # 原增强条件2
+            df['工业指标'] < df['基线阈值'],
+            df['修正RSI'] < rsi_threshold, # <--- 使用参数
+            df['Price'] < df['EMA21'],
+            df['Price'] < df['布林下轨'] * 1.05,
+            df['ema_ratio'] > df['dynamic_ema_threshold'],
+            df['动量因子'] < df['低波动阈值']
         ]
 
         # 确保所有条件都是布尔系列
@@ -390,16 +395,24 @@ def process_signals(df):
         processed_df['采购信号'] = False
     processed_df['采购信号'] = processed_df['采购信号'].astype(bool)
 
-    # 显式类型转换（解决FutureWarning）
-    # 确保 rolling 操作前 Series 是布尔型
-    signal_shifted = processed_df['采购信号'].shift(1).fillna(False).astype(bool)
+    # --- 修改：使用整数移位和填充来计算 shifted ---
+    # 1. 将布尔信号转换为整数 (True=1, False=0)
+    signal_int_for_shift = processed_df['采购信号'].astype(int)
+    # 2. 移位整数序列，用 0 填充产生的 NaN
+    signal_shifted_int = signal_int_for_shift.shift(1).fillna(0)
+    # 3. 将移位并填充后的整数序列转换回布尔型
+    signal_shifted = signal_shifted_int.astype(bool)
+    # --- 结束修改 ---
+
+    # 使用转换后的布尔序列进行滚动最大值计算
     shifted = signal_shifted.rolling(
         MIN_PURCHASE_INTERVAL, min_periods=1
-    ).max().astype(bool)
+    ).max().astype(bool) # Ensure the result is boolean
+
     processed_df['采购信号'] = processed_df['采购信号'] & ~shifted
 
     # 限制最大连续信号
-    signal_int = processed_df['采购信号'].astype(int)
+    signal_int = processed_df['采购信号'].astype(int) # 重新计算 signal_int
     # groupby 的 key 需要能 hash，使用 cumsum 的结果是 OK 的
     group_keys = (~processed_df['采购信号']).cumsum()
     signal_streak = signal_int.groupby(group_keys).transform('cumsum') # Use cumsum for streak count
@@ -424,12 +437,13 @@ def process_signals(df):
     return processed_df
 
 
-def generate_report(df):
+def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     """
     生成包含详细解释和悬停提示的 HTML 格式分析报告。
     此报告旨在帮助用户（即使不熟悉金融交易）理解当前的白银市场状况以及策略的买入建议。
     优化：移除了文本中可见的(?)标记，悬停提示功能保留。
     新增：为带有悬停提示的元素添加 CSS 样式（始终显示虚线下划线，悬停时变色）。
+    新增：报告中明确显示当前使用的关键参数。
     """
     if df.empty:
         return "<h2>⚠️ 数据为空，无法生成报告</h2>"
@@ -447,10 +461,10 @@ def generate_report(df):
         return f"<h2>⚠️ 报告生成失败：缺失列 {', '.join(missing_cols)}</h2>"
 
     # 填充可能存在的NaN值，避免格式化错误
-    df.fillna(method='ffill', inplace=True)
-    df.fillna(method='bfill', inplace=True)
+    df = df.ffill() # 使用 .ffill() 并移除 inplace
+    df = df.bfill() # 使用 .bfill() 并移除 inplace
     # 对于特定列，提供更合理的默认值
-    df.fillna({'修正RSI': 50, '动量因子': 0, 'ATR': 0, '波动上轨': df['Price'], '波动下轨': df['Price']}, inplace=True)
+    df = df.fillna({'修正RSI': 50, '动量因子': 0, 'ATR': 0, '波动上轨': df['Price'], '波动下轨': df['Price']})
 
 
     current = df.iloc[-1]
@@ -491,22 +505,24 @@ def generate_report(df):
     # 计算当前价格相对于短期均线的百分比偏差
     price_trend_vs_sma = ((price / short_sma) - 1) * 100 if short_sma != 0 else 0
 
-    # --- 定义悬停提示信息 ---
+    # --- 定义悬停提示信息 (更新阈值相关文本) ---
     HOVER_TEXTS = {
         'price': "从数据源获取的每日收盘价。",
         'indicator': "计算思路: (价格/短期均线) * (价格/长期均线) * (1 - 动量因子)。综合衡量价格位置和波动性。",
-        'threshold': f"计算思路: 最近 {HISTORY_WINDOW} 天工业指标的25%分位数。是工业指标的动态买入参考线。",
+        # --- 修改：在描述中加入 quantile 参数 --- 
+        'threshold': f"计算思路: 最近 {HISTORY_WINDOW} 天工业指标的 {optimized_quantile*100:.0f}% 分位数。是工业指标的动态买入参考线。",
         'signal': "综合所有核心条件和阻断规则得出的最终建议。",
         'dynamic_window': f"计算思路: 基准窗口({BASE_WINDOW_SHORT}/{BASE_WINDOW_LONG}天)根据距离上次购买天数进行衰减({WINDOW_DECAY_RATE}率)，最短{MIN_WINDOW_SHORT}天。距离越久，窗口越短，越灵敏。",
         'price_trend': "计算思路: (当前价格 / 短期动态均线 - 1) * 100%。表示价格偏离近期平均成本的程度。",
         'volatility': f"计算思路: 最近{{dynamic_short_window_val}}天内每日价格变化百分比绝对值的平均值。此指标衡量价格波动的剧烈程度（即近期波动率），值越低表示市场越平静。注意：名称可能易误导，它主要反映波动性而非趋势动量。", # 使用占位符
         'core_cond1': f"工业指标 ({indicator:.2f}) 是否低于基线阈值 ({threshold:.2f})？",
-        'core_cond2': f"修正RSI ({rsi:.1f}) 是否低于 45？RSI通过计算一定时期内上涨日和下跌日的平均涨跌幅得到，衡量买卖力量，低于45通常表示超卖。",
+        # --- 修改：在描述中加入 rsi 参数 --- 
+        'core_cond2': f"修正RSI ({rsi:.1f}) 是否低于 {optimized_rsi_threshold}？RSI通过计算一定时期内上涨日和下跌日的平均涨跌幅得到，衡量买卖力量，低于此值表示超卖。",
         'core_cond3': f"当前价格 ({price:.2f}) 是否低于 EMA21 ({ema21:.2f})？EMA是指数移动平均线，给予近期价格更高权重。",
         'core_cond4': f"当前价格 ({price:.2f}) 是否低于布林下轨 ({lower_band:.2f}) 的 1.05 倍 ({lower_band * 1.05:.2f})？布林通道基于移动平均线加减标准差得到，衡量价格相对波动范围。",
         'core_cond5': f"EMA9/EMA21比率 ({ema_ratio:.3f}) 是否大于动态阈值 ({dynamic_threshold:.3f})？该阈值会根据波动性调整。",
         'core_cond6': f"动量因子 ({volatility:.3f}) 是否低于其动态阈值 ({vol_threshold:.3f})？该阈值是动量因子自身的45日35%分位数。",
-        'cond_score': "满足以上6个核心条件的数量，至少需要满足4个才能初步考虑买入。",
+        'cond_score': f"满足以上6个核心条件的数量（部分条件阈值可能已优化），至少需要满足4个才能初步考虑买入。", # 更新提示
         'peak_filter': f"一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({{atr_upper_val:.2f}})80%以上位置，用于排除一些潜在的顶部信号。", # 使用占位符
         'interval': f"距离上次系统发出买入信号的天数，要求至少间隔 {MIN_PURCHASE_INTERVAL} 天才能再次买入。",
         'window_decay': "显示当前动态短窗口相比基准窗口缩短了多少天，反映了衰减机制的效果。",
@@ -516,50 +532,12 @@ def generate_report(df):
         'ema_crossover': "基于 EMA9 和 EMA21 的直接相对位置。金叉状态 (EMA9 > EMA21) 通常视为看涨倾向，死叉状态 (EMA9 < EMA21) 通常视为看跌倾向。图表上的标记 (↑/↓) 显示精确的交叉点。" # 新增EMA交叉解释
     }
 
-    # --- 构建 HTML 报告字符串 ---
-    # 使用 format 方法动态填充 HOVER_TEXTS 中的变量
-    dynamic_short_window_val = int(current.get('动态短窗口', BASE_WINDOW_SHORT))
-    atr_upper_val = safe_float(current.get('波动上轨', price * 1.05))
-    ema9_val = safe_float(current.get('EMA9', price))
-    ema21_val = safe_float(current['EMA21'], default=price)
-    ema50_val = safe_float(current.get('EMA50', price))
-
-    # 填充 HOVER_TEXTS
-    for key in HOVER_TEXTS:
-        try:
-            HOVER_TEXTS[key] = HOVER_TEXTS[key].format(
-                HISTORY_WINDOW=HISTORY_WINDOW,
-                BASE_WINDOW_SHORT=BASE_WINDOW_SHORT,
-                BASE_WINDOW_LONG=BASE_WINDOW_LONG,
-                WINDOW_DECAY_RATE=WINDOW_DECAY_RATE,
-                MIN_WINDOW_SHORT=MIN_WINDOW_SHORT,
-                indicator=indicator, threshold=threshold,
-                rsi=rsi, price=price, ema21=ema21, lower_band=lower_band,
-                ema_ratio=ema_ratio, dynamic_threshold=dynamic_threshold,
-                volatility=volatility, vol_threshold=vol_threshold,
-                atr_upper_val=atr_upper_val, # 使用填充后的值
-                MIN_PURCHASE_INTERVAL=MIN_PURCHASE_INTERVAL,
-                ema9_val=ema9_val, # 使用填充后的值
-                ema21_val=ema21_val, # 使用填充后的值
-                ema50_val=ema50_val, # 使用填充后的值
-                dynamic_short_window_val=dynamic_short_window_val # 使用填充后的值
-            )
-        except KeyError as e:
-            # 如果某个 key 的 format 字符串包含未定义的占位符，打印警告
-            print(f"警告: 在格式化 HOVER_TEXTS['{key}'] 时缺少键: {e}")
-        except Exception as e:
-            print(f"警告: 格式化 HOVER_TEXTS['{key}'] 时发生错误: {e}")
-
-    # 重新填充该特定 key
-    try:
-        HOVER_TEXTS['ema_crossover'] = HOVER_TEXTS['ema_crossover'] # 这里只是为了触发可能的 format，如果之前有占位符的话
-    except Exception as e:
-         print(f"警告: 格式化 HOVER_TEXTS['ema_crossover'] 时发生错误: {e}")
-
+    # --- 构建 HTML 报告字符串 (加入参数显示) ---
     report_html = f"""
     <div style="font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: auto; padding: 20px; border: 1px solid #eee; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
         <h2 style="text-align: center; border-bottom: 1px solid #ccc; padding-bottom: 10px;">银价采购分析报告</h2>
         <p><strong>报告日期：</strong>{current['日期'].strftime('%Y-%m-%d')}</p>
+        <p><strong>使用参数：</strong> <span title="工业指标阈值计算所用的分位数">基线分位数: {optimized_quantile:.2f}</span> | <span title="RSI买入条件所用的阈值">RSI阈值: {optimized_rsi_threshold}</span></p>
         <p><strong title='{HOVER_TEXTS['price']}'>当前价格：</strong>{price:.2f} CNY</p>
         <p><strong title='{HOVER_TEXTS['indicator']}'>核心指标（工业指标）：</strong>{indicator:.2f} <span title='{HOVER_TEXTS['threshold']}'>（买入参考阈值：低于 {threshold:.2f}）</span></p>
 
@@ -601,11 +579,12 @@ def generate_report(df):
     report_html += f'<li>当前状态：<strong style="color:{ema_crossover_color};">{ema_crossover_status}</strong></li>'
     report_html += "</ul>"
 
-    # --- 定义六个核心买入条件的中文解释和当前状态 ---
+    # --- 定义六个核心买入条件的中文解释和当前状态 (更新条件2的文本) ---
     CONDITION_EXPLANATIONS = {
         'core': {
             'cond1': ("工业指标 < 阈值", f"{indicator:.2f} < {threshold:.2f}", HOVER_TEXTS['core_cond1']),
-            'cond2': ("RSI < 45 (超卖区域)", f"RSI {rsi:.1f} < 45", HOVER_TEXTS['core_cond2']),
+            # --- 修改：使用优化后的 RSI 阈值 --- 
+            'cond2': (f"RSI < {optimized_rsi_threshold} (超卖区域)", f"RSI {rsi:.1f} < {optimized_rsi_threshold}", HOVER_TEXTS['core_cond2']),
             'cond3': ("价格 < EMA21", f"价格 {price:.2f} < EMA21 {ema21:.2f}", HOVER_TEXTS['core_cond3']),
             'cond4': ("价格 < 布林下轨附近", f"价格 {price:.2f} < 下轨参考 {lower_band * 1.05:.2f}", HOVER_TEXTS['core_cond4']),
             'cond5': ("短期EMA动能 > 阈值", f"EMA比率 {ema_ratio:.3f} > 阈值 {dynamic_threshold:.3f}", HOVER_TEXTS['core_cond5']),
@@ -826,11 +805,12 @@ def generate_report(df):
         'analysis_data': analysis_data 
     }
 
-def create_visualization(df):
+def create_visualization(df, optimized_rsi_threshold):
     """
     使用 Plotly 生成交互式 HTML 图表，包含三个子图，帮助可视化分析。
     新增功能：鼠标悬停在图表线上时，会显示该线的名称、数值以及简要计算说明。
     新增功能：在价格图上标记 EMA 金叉 (↑) 和死叉 (↓)。
+    新增功能：RSI 子图参考线及标题动态反映参数。
     图表解读指南... (保持不变)
     """
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
@@ -839,7 +819,8 @@ def create_visualization(df):
                             # 修改标题以反映新标记
                             '价格与信号 (看红色三角/金叉绿色↑/死叉红色↓)', 
                             '策略指标分析 (看蓝色线是否低于红色虚线/进入绿色区域)',
-                            '动量指标分析 (看紫色线是否低于红色点线)'
+                            # --- 修改：更新子图标题以反映动态RSI阈值 --- 
+                            f'动量指标分析 (看紫色线是否低于红色点线 [RSI阈值={optimized_rsi_threshold}])'
                         ))
 
     # --- 定义悬停模板 ---
@@ -1009,8 +990,7 @@ def create_visualization(df):
     fig.add_hline(y=1.0, line_dash="dot", line_color="gray", annotation_text="指标参考基准=1", row=2, col=1)
 
 
-    # --- 行 3: 动量指标分析 --- 
-    # 移除 legendgroup
+    # --- 行 3: 动量指标分析 (更新RSI参考线) ---
     fig.add_trace(go.Scatter(x=df['日期'], y=df['修正RSI'], mode='lines', name='修正RSI (市场强弱)',
                              line=dict(color='darkviolet'), # legendgroup='momentum', legendrank=13,
                              hovertemplate=hovertemplate_rsi),
@@ -1019,7 +999,10 @@ def create_visualization(df):
                              line=dict(color='darkorange', dash='dash'), # legendgroup='momentum', legendrank=14,
                              hovertemplate=hovertemplate_rsi_threshold),
                   row=3, col=1)
-    fig.add_hline(y=45, line_dash="dot", line_color="red", opacity=0.5, annotation_text="RSI超卖参考线=45 (买入条件2)", row=3, col=1, name="RSI 45")
+    # --- 修改：使用优化后的 RSI 阈值绘制水平线及其标注 --- 
+    fig.add_hline(y=optimized_rsi_threshold, line_dash="dot", line_color="red", opacity=0.5, 
+                  annotation_text=f"RSI超卖参考线={optimized_rsi_threshold} (买入条件2)", 
+                  row=3, col=1, name=f"RSI {optimized_rsi_threshold}")
 
     # --- 更新整体布局 --- 
     fig.update_layout(
@@ -1042,13 +1025,15 @@ def create_visualization(df):
     return fig
 
 
-def create_backtest_visualization(df, dca_interval=21):
+def create_backtest_visualization(df, dca_interval, optimized_quantile, optimized_rsi_threshold):
     """
     生成策略与固定间隔定投的回测对比图表 (基于相同采购次数)。
 
     Args:
         df (pd.DataFrame): 包含价格和策略采购信号的 DataFrame。
         dca_interval (int): 固定间隔定投的交易日间隔 (例如 21 约等于每月)。
+        optimized_quantile (float): 策略使用的基线分位数。
+        optimized_rsi_threshold (int): 策略使用的 RSI 阈值。
 
     Returns:
         plotly.graph_objects.Figure: 包含对比图表的 Plotly Figure 对象。
@@ -1061,9 +1046,12 @@ def create_backtest_visualization(df, dca_interval=21):
     df_backtest['cost_strategy'] = df_backtest['Price'].where(df_backtest['purchase_strategy'], 0)
     df_backtest['cum_quantity_strategy'] = df_backtest['purchase_strategy'].astype(int).cumsum()
     df_backtest['cum_cost_strategy'] = df_backtest['cost_strategy'].cumsum()
+    # --- 修改: 使用赋值代替 inplace=True ---
     df_backtest['avg_cost_strategy'] = (df_backtest['cum_cost_strategy'] / df_backtest['cum_quantity_strategy'])
-    df_backtest['avg_cost_strategy'].fillna(method='ffill', inplace=True)
-    df_backtest['avg_cost_strategy'].fillna(0, inplace=True) # 确保开头没有 NaN
+    # --- 修改: 使用 .ffill() 代替 fillna(method='ffill') ---
+    df_backtest['avg_cost_strategy'] = df_backtest['avg_cost_strategy'].ffill()
+    # --- 结束修改 ---
+    df_backtest['avg_cost_strategy'] = df_backtest['avg_cost_strategy'].fillna(0) # 这一行保持不变
 
     # 获取策略总购买次数
     total_purchases_strategy = df_backtest['cum_quantity_strategy'].iloc[-1]
@@ -1098,23 +1086,33 @@ def create_backtest_visualization(df, dca_interval=21):
     df_backtest['cost_dca_fair'] = df_backtest['Price'].where(df_backtest['purchase_dca_fair'], 0)
     df_backtest['cum_quantity_dca_fair'] = df_backtest['purchase_dca_fair'].astype(int).cumsum()
     df_backtest['cum_cost_dca_fair'] = df_backtest['cost_dca_fair'].cumsum()
+    # --- 修改: 使用赋值代替 inplace=True ---
     df_backtest['avg_cost_dca_fair'] = (df_backtest['cum_cost_dca_fair'] / df_backtest['cum_quantity_dca_fair'])
-    df_backtest['avg_cost_dca_fair'].fillna(method='ffill', inplace=True)
-    df_backtest['avg_cost_dca_fair'].fillna(0, inplace=True) # 确保开头没有 NaN
-    
+    # --- 修改: 使用 .ffill() 代替 fillna(method='ffill') ---
+    df_backtest['avg_cost_dca_fair'] = df_backtest['avg_cost_dca_fair'].ffill()
+    # --- 结束修改 ---
+    df_backtest['avg_cost_dca_fair'] = df_backtest['avg_cost_dca_fair'].fillna(0) # 这一行保持不变
+
     # --- 计算相对表现 (比率和差值) --- 
     # 计算平均成本比率 (策略 / 定投)，<1 表示策略更优
+    # --- 修改: 使用赋值代替 inplace=True ---
     df_backtest['avg_cost_ratio'] = (df_backtest['avg_cost_strategy'] / 
                                      df_backtest['avg_cost_dca_fair'].replace(0, np.nan)) # 避免除零
-    df_backtest['avg_cost_ratio'].fillna(method='ffill', inplace=True) # 填充开始计算前的NaN
-    df_backtest['avg_cost_ratio'].fillna(1, inplace=True) # 假设开始时比率为1
-    
+    # --- 修改: 使用赋值代替 inplace=True ---
+    # --- 修改: 使用 .ffill() 代替 fillna(method='ffill') ---
+    df_backtest['avg_cost_ratio'] = df_backtest['avg_cost_ratio'].ffill()
+    # --- 结束修改 ---
+    df_backtest['avg_cost_ratio'] = df_backtest['avg_cost_ratio'].fillna(1) # 这一行保持不变
+
     # 计算平均成本差值 (定投 - 策略)，正数表示策略更优
     df_backtest['avg_cost_diff'] = np.nan
     valid_comparison_mask = (df_backtest['avg_cost_strategy'] > 0) & (df_backtest['avg_cost_dca_fair'] > 0)
     df_backtest.loc[valid_comparison_mask, 'avg_cost_diff'] = df_backtest['avg_cost_dca_fair'] - df_backtest['avg_cost_strategy']
-    df_backtest['avg_cost_diff'].fillna(method='ffill', inplace=True)
-    df_backtest['avg_cost_diff'].fillna(0, inplace=True)
+    # --- 修改: 使用赋值代替 inplace=True ---
+    # --- 修改: 使用 .ffill() 代替 fillna(method='ffill') ---
+    df_backtest['avg_cost_diff'] = df_backtest['avg_cost_diff'].ffill()
+    # --- 结束修改 ---
+    df_backtest['avg_cost_diff'] = df_backtest['avg_cost_diff'].fillna(0) # 这一行保持不变
 
     # --- 可视化 (3个子图) --- 
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05,
@@ -1159,13 +1157,14 @@ def create_backtest_visualization(df, dca_interval=21):
                   row=3, col=1)
     fig.add_hline(y=0, line_dash="dash", line_color="gray", row=3, col=1)
 
-    # --- 布局与信息 (更新Y轴标签) --- 
+    # --- 布局与信息 (更新Y轴标签 和 标题) --- 
     final_avg_cost_strategy = df_backtest['avg_cost_strategy'].iloc[-1]
     final_avg_cost_dca_fair = df_backtest['avg_cost_dca_fair'].iloc[-1]
     final_total_quantity_dca_fair = df_backtest['cum_quantity_dca_fair'].iloc[-1] 
 
     fig.update_layout(
-        title_text=f'策略回测公平对比 (均采购 {total_purchases_strategy} 次, 定投间隔: {dca_interval} 交易日)<br><sup>最终平均成本: 策略信号 {final_avg_cost_strategy:.2f} | 定投 {final_avg_cost_dca_fair:.2f}</sup>',
+        # --- 修改：在标题中加入策略参数 --- 
+        title_text=f'策略回测公平对比 (均采购 {total_purchases_strategy} 次)<br><sup>策略参数: Quantile={optimized_quantile:.2f}, RSI Thresh={optimized_rsi_threshold} | 定投间隔: {dca_interval} 交易日</sup><br><sup>最终平均成本: 策略信号 {final_avg_cost_strategy:.2f} | 定投 {final_avg_cost_dca_fair:.2f}</sup>',
         hovermode='x unified',
         height=900, 
         legend_title_text='策略/指标',
@@ -1184,32 +1183,160 @@ def create_backtest_visualization(df, dca_interval=21):
     return fig
 
 
+# --- 新增: 定义 Optuna 目标函数 ---
+def objective(trial, df_original):
+    """Optuna 目标函数：计算给定参数下的平均采购成本"""
+    df_temp = df_original.copy()
+    # --- 新增：在调用 calculate_strategy 前初始化 '采购信号' 列 --- 
+    df_temp['采购信号'] = False
+    # --- 结束新增 ---
+
+    # 1. 获取建议的参数值
+    baseline_quantile = trial.suggest_float('baseline_quantile', 0.1, 0.4)
+    rsi_threshold = trial.suggest_int('rsi_threshold', 30, 55)
+
+    try:
+        # 2. 使用建议的参数运行策略计算 (假设执行两轮)
+        # 注意：这里需要传递参数给函数
+        df_processed = calculate_strategy(df_temp, baseline_quantile=baseline_quantile)
+        df_signaled = generate_signals(df_processed, rsi_threshold=rsi_threshold)
+        # 第二轮计算也需要使用相同参数
+        df_processed_r2 = calculate_strategy(df_signaled.copy(), baseline_quantile=baseline_quantile) # 使用副本避免干扰
+        df_final = generate_signals(df_processed_r2, rsi_threshold=rsi_threshold)
+
+
+        # 3. 计算该参数下的平均采购成本 (基于原始策略信号)
+        purchase_signal = df_final['采购信号']
+        cost = df_final['Price'].where(purchase_signal, 0)
+        cum_quantity = purchase_signal.astype(int).cumsum()
+        cum_cost = cost.cumsum()
+
+        final_cum_quantity = cum_quantity.iloc[-1]
+
+        if final_cum_quantity == 0:
+            # 如果没有买入，返回一个非常大的成本值，表示这是一个不好的结果
+            # 可以加一个惩罚项，鼓励至少产生一些交易
+            # trial.report(float('inf'), step=0) # 报告无穷大值
+            return 1e10 # 返回一个大数
+
+        final_avg_cost = cum_cost.iloc[-1] / final_cum_quantity
+        
+        # (可选) 向 Optuna 报告中间值或最终值，用于剪枝等高级功能
+        # trial.report(final_avg_cost, step=1)
+        # if trial.should_prune():
+        #     raise optuna.TrialPruned()
+
+        return final_avg_cost
+
+    except Exception as e:
+        # 如果计算过程中出错，打印错误并返回一个差的值
+        # --- 修改：打印完整的 traceback --- 
+        print(f"Error during trial {trial.number} with params {trial.params}:")
+        traceback.print_exc() # 打印详细错误堆栈
+        # --- 结束修改 ---
+        # 可以返回一个特定的错误代码或大数值
+        return 1e10 # 返回一个大数表示失败
+
+
 # --- 主程序：生成 HTML 报告 ---
 if __name__ == "__main__":
     print("开始执行银价分析...")
 
     # 1. 加载数据
     print("正在加载数据...")
-    df = load_silver_data()
-    df['采购信号'] = False # 初始化信号列
+    df_main = load_silver_data() # 使用新变量名以示区分
 
-    # 2. 计算策略与信号 (执行两轮)
-    print("正在计算策略与信号 (第一轮)...")
-    df = calculate_strategy(df)
-    df = generate_signals(df)
-    print("正在计算策略与信号 (第二轮)...")
-    df = calculate_strategy(df)
-    df = generate_signals(df)
+    # --- 新增: 定义并创建早停回调 (注释掉 Optuna 相关) ---
+    # class EarlyStoppingCallback:
+    #     def __init__(self, patience: int):
+    #         self.patience = patience
+    #         self.best_value = float('inf') # 或者对于最大化问题是 -float('inf')
+    #         self.counter = 0
+    #
+    #     def __call__(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial) -> None:
+    #         # 仅当试验成功完成时才检查
+    #         if trial.state == optuna.trial.TrialState.COMPLETE:
+    #             current_value = trial.value
+    #             if current_value is not None: # 确保值存在
+    #                 if current_value < self.best_value:
+    #                     self.best_value = current_value
+    #                     self.counter = 0
+    #                 else:
+    #                     self.counter += 1
+    #
+    #                 if self.counter >= self.patience:
+    #                     print(f"触发早停：连续 {self.patience} 次试验没有改进。")
+    #                     study.stop()
+    #
+    # early_stopping_patience = 25 # 连续多少次没有改进就停止
+    # early_stopping_callback = EarlyStoppingCallback(patience=early_stopping_patience)
+    # --- 结束新增 ---
 
-    # 3. 生成报告数据
+    # --- 执行 Optuna 优化 (注释掉) ---
+    # print("\n开始执行参数优化 (带早停)...") # 更新提示
+    # study = optuna.create_study(direction='minimize')
+    # try:
+    #     # 使用 lambda 传递原始 df 数据给 objective 函数
+    #     study.optimize(lambda trial: objective(trial, df_original=df_main.copy()),
+    #                    n_trials=100, # <--- 新增：设置目标试验次数以启用进度条
+    #                    callbacks=[early_stopping_callback], # 只保留 callbacks
+    #                    show_progress_bar=True) # 显示进度条
+    #
+    #     print("\n参数优化完成!")
+    #     if study.best_trial:
+    #         print("找到的最佳试验:")
+    #         print(f"  数值 (最低平均采购成本): {study.best_trial.value:.4f}")
+    #         print("  最佳参数组合: ")
+    #         for key, value in study.best_trial.params.items():
+    #             # 格式化输出
+    #             if isinstance(value, float):
+    #                 print(f"    {key}: {value:.4f}")
+    #             else:
+    #                 print(f"    {key}: {value}")
+    #         # --- 删除误导性提示 ---
+    #     else:
+    #         print("未能找到有效的试验结果。可能是所有试验都出错或未产生购买信号。")
+    #
+    # except Exception as opt_e:
+    #     print(f"Optuna 优化过程中遇到未处理错误: {opt_e}")
+    # --- 结束 Optuna 优化 ---
+
+    # --- 获取优化后的参数 (注释掉 Optuna 获取逻辑, 使用指定值) ---
+    # ... (注释掉的 if/else 块保持不变) ...
+    # --- 修改：直接设置指定的固定参数 --- 
+    optimized_quantile = 0.3631
+    optimized_rsi_threshold = 33
+    print("\n将使用固定的指定参数生成最终报告：") # 更新提示
+    print(f"  baseline_quantile: {optimized_quantile:.4f}")
+    print(f"  rsi_threshold: {optimized_rsi_threshold}")
+    # --- 结束获取参数 ---
+
+    # --- 使用最终确定的参数生成报告和图表 ---
+    print("\n使用最终确定的参数生成报告和回测...")
+    df_report = df_main.copy()
+    df_report['采购信号'] = False
+
+    # 2. 计算策略与信号 (传入最终确定的参数)
+    print("正在计算策略与信号 (第一轮 - 最终参数)...")
+    # 明确传入参数
+    df_report = calculate_strategy(df_report, baseline_quantile=optimized_quantile)
+    df_report = generate_signals(df_report, rsi_threshold=optimized_rsi_threshold)
+    print("正在计算策略与信号 (第二轮 - 最终参数)...")
+    df_report_r1_copy = df_report.copy()
+    # 明确传入参数
+    df_report_r2 = calculate_strategy(df_report_r1_copy, baseline_quantile=optimized_quantile)
+    df_report = generate_signals(df_report_r2, rsi_threshold=optimized_rsi_threshold)
+
+    # 3. 生成主报告数据
     print("正在生成主报告数据...")
-    report_data = generate_report(df)
+    report_data = generate_report(df_report.copy(), optimized_quantile, optimized_rsi_threshold)
     report_html_content = report_data['report_content']
     analysis_data = report_data['analysis_data']
 
     # 4. 生成主图表 Figure 对象
     print("正在生成主图表...")
-    fig = create_visualization(df)
+    # 确保 create_visualization 使用的是正确计算后的 df_report
+    fig = create_visualization(df_report.copy(), optimized_rsi_threshold) # 传递副本
 
     # 5. 将主图表转换为 HTML div
     try:
@@ -1222,8 +1349,7 @@ if __name__ == "__main__":
         chart_html_div = "<p style='color:red;'>主图表生成失败。</p>"
 
     # 6. 构建完整的 HTML 页面 (主报告)
-    # ... (这部分代码保持不变，需要从原始文件中获取) ...
-    # --- 6.1 预先构建动态\"今日解读\"部分的 HTML ---
+    # --- 6.1 预先构建动态"今日解读"部分的 HTML ---
     today_interpretation_html = f'''
         <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data['current_date'].strftime('%Y-%m-%d')}) 的策略信号解读：</h3>
         <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购 ({})</span>'.format(analysis_data['signal_strength']) if analysis_data['signal'] else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
@@ -1363,83 +1489,56 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"错误：写入主 HTML 文件失败: {e}")
 
-    # --- 新增：生成并保存回测图表 ---
-    print("正在生成回测对比图表...")
-    try:
-        # 定义定投间隔（例如大约每月一次，假设21个交易日）
-        dca_trading_day_interval = 21
-        # 需要传递 df 的副本，因为它可能在 generate_report 中被修改 (fillna)
-        backtest_fig = create_backtest_visualization(df.copy(), dca_interval=dca_trading_day_interval)
-        backtest_filename = "backtest_report.html"
-        # 使用 pio.write_html 直接写入完整 HTML 文件
-        pio.write_html(backtest_fig, backtest_filename, auto_open=False, include_plotlyjs='cdn')
-        print(f"成功将回测对比图表写入文件: {backtest_filename}")
-    except Exception as e:
-        print(f"错误：生成或保存回测图表失败: {e}")
-    # --- 结束新增 ---
+    # --- 生成并保存回测图表 (注释掉) ---
+    # print("正在生成回测对比图表...")
+    # try:
+    #     dca_trading_day_interval = 21
+    #     # --- 修改：传递优化后的参数 --- 
+    #     backtest_fig = create_backtest_visualization(df_report.copy(), 
+    #                                                dca_interval=dca_trading_day_interval, 
+    #                                                optimized_quantile=optimized_quantile, 
+    #                                                optimized_rsi_threshold=optimized_rsi_threshold)
+    #     backtest_filename = "backtest_report.html"
+    #     pio.write_html(backtest_fig, backtest_filename, auto_open=False, include_plotlyjs='cdn')
+    #     print(f"成功将回测对比图表写入文件: {backtest_filename}")
+    # except Exception as e:
+    #     print(f"错误：生成或保存回测图表失败: {e}")
 
     # 8. 自动执行 Git 命令推送到 GitHub
-    # ... (Git 推送代码保持不变) ...
     print("尝试将更新推送到 GitHub...")
     try:
-        commit_message = f"Update report - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        files_to_add = [output_filename, backtest_filename, ".gitignore", __file__] # 添加回测文件名
-        add_cmd = ["git", "add"] + files_to_add
-        commit_cmd = ["git", "commit", "-m", commit_message]
-        push_cmd = ["git", "push", "origin", "master"]
-
-        print(f"执行命令: {' '.join(add_cmd)}")
-        add_result = subprocess.run(add_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
-        if add_result.stdout: print(f"Git 输出:\n{add_result.stdout.strip()}")
-        if add_result.stderr: print(f"Git 错误:\n{add_result.stderr.strip()}")
-        if add_result.returncode != 0:
-            print(f"Git add 命令执行失败，返回码: {add_result.returncode}。停止。")
+        # 检查是否有未提交的更改
+        status_result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True, check=True, encoding='utf-8')
+        if not status_result.stdout.strip():
+            print("没有检测到文件更改，无需推送。")
         else:
-            print(f"执行命令: {' '.join(commit_cmd)}")
-            commit_result = subprocess.run(commit_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
-            commit_success = False
-            if commit_result.stdout: print(f"Git 输出:\n{commit_result.stdout.strip()}")
-            if commit_result.stderr:
-                if "nothing to commit" in commit_result.stderr or "no changes added to commit" in commit_result.stderr: # 兼容不同 Git 版本信息
-                    print(f"Git 信息 (可忽略): {commit_result.stderr.strip()}")
-                    commit_success = True
-                else:
-                     print(f"Git 错误:\n{commit_result.stderr.strip()}")
-            if commit_result.returncode == 0:
-                commit_success = True
+            print("检测到更改，开始执行 Git 命令...")
+            # 1. 添加所有更改
+            add_result = subprocess.run(['git', 'add', '.'], capture_output=True, text=True, check=True, encoding='utf-8')
+            print("Git 添加成功。")
 
-            if not commit_success and "nothing to commit" not in (commit_result.stderr or ""): # 再次确认非空提交错误
-                 print(f"Git commit 命令执行失败，返回码: {commit_result.returncode}。停止。")
-            else:
-                print(f"尝试推送: {' '.join(push_cmd)}")
-                while True:
-                    push_result = subprocess.run(push_cmd, capture_output=True, text=True, check=False, encoding='utf-8')
-                    push_succeeded = False
-                    push_stderr = push_result.stderr.strip() if push_result.stderr else ""
+            # 2. 提交更改
+            commit_message = f"自动更新银价分析报告 - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            commit_result = subprocess.run(['git', 'commit', '-m', commit_message], capture_output=True, text=True, check=True, encoding='utf-8')
+            print("Git 提交成功。")
 
-                    if push_result.stdout: print(f"Git 输出:\n{push_result.stdout.strip()}")
-                    if push_stderr:
-                        if "Everything up-to-date" in push_stderr or "up-to-date" in push_stderr:
-                            print(f"Git 信息: {push_stderr}")
-                            push_succeeded = True
-                        else:
-                            print(f"Git 错误:\n{push_stderr}")
+            # 3. 推送到远程仓库 (假设远程名为 origin，分支为 main)
+            # --- 注意：确保你有权限推送到该仓库，并且可能需要配置凭据 ---
+            push_result = subprocess.run(['git', 'push', 'origin', 'main'], capture_output=True, text=True, check=True, encoding='utf-8')
+            print("Git 推送成功。")
 
-                    if push_result.returncode == 0:
-                        push_succeeded = True
-
-                    if push_succeeded:
-                        print("推送成功或无需推送。")
-                        break
-                    else:
-                        print(f"推送失败 (返回码: {push_result.returncode})，自动重试...")
-
+    except subprocess.CalledProcessError as e:
+        print(f"Git 命令执行错误: {e}")
+        print(f"命令: {e.cmd}")
+        print(f"返回码: {e.returncode}")
+        print(f"输出: {e.stdout}")
+        print(f"错误输出: {e.stderr}")
     except FileNotFoundError:
-        print("错误：找不到 'git' 命令。请确保 Git 已安装并添加到系统 PATH。")
-    except Exception as git_e:
-        print(f"错误：执行 Git 命令时出错: {git_e}")
+        print("错误：未找到 'git' 命令。请确保 Git 已安装并添加到系统 PATH。")
+    except Exception as e:
+        print(f"执行 Git 命令时发生未知错误: {e}")
 
 
-    print("分析完成。")
+    print("\n分析完成。")
 
 
