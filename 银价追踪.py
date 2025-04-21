@@ -541,6 +541,11 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         <p><strong title='{HOVER_TEXTS['price']}'>当前价格：</strong>{price:.2f} CNY</p>
         <p><strong title='{HOVER_TEXTS['indicator']}'>核心指标（工业指标）：</strong>{indicator:.2f} <span title='{HOVER_TEXTS['threshold']}'>（买入参考阈值：低于 {threshold:.2f}）</span></p>
 
+        # +++ 新增：插入近期成本分析的 HTML +++
+        <p><strong title='{HOVER_TEXTS['price']}'>当前价格：</strong>{price:.2f} CNY</p>
+        <p><strong title='{HOVER_TEXTS['indicator']}'>核心指标（工业指标）：</strong>{indicator:.2f} <span title='{HOVER_TEXTS['threshold']}'>（买入参考阈值：低于 {threshold:.2f}）</span></p>
+        # +++ 结束新增 +++
+
         <h3 title='{HOVER_TEXTS['signal']}'>🛒 今日建议：{'<span style="color:green; font-weight:bold;">立即采购</span>' if current['采购信号'] else '<span style="color:orange; font-weight:bold;">持币观望</span>'}</h3>
         <p><em>（此建议基于以下综合分析，需至少满足4个核心条件且无阻断信号）</em></p>
 
@@ -671,6 +676,101 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         </ul>"""
     else:
          report_html += "<h3>📉 三日价格变化参考：数据不足</h3>"
+
+    # +++ 新增：近期 (252天) 成本效益分析 +++
+    N_DAYS_RECENT = 252
+    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析：</h3>"
+
+    if len(df) >= N_DAYS_RECENT:
+        df_recent = df.iloc[-N_DAYS_RECENT:].copy() # 获取最近 N 天数据副本
+
+        # 确保需要的列存在
+        required_recent_cols = ['Price', '采购信号', '工业指标', '基线阈值_短', '基线阈值', '基线阈值_长']
+        missing_recent_cols = [col for col in required_recent_cols if col not in df_recent.columns]
+
+        if not missing_recent_cols:
+            # 计算近期市场平均价格
+            avg_market_price_recent = safe_float(df_recent['Price'].mean())
+
+            recent_cost_analysis_html += f"<p>同期市场平均价格: {avg_market_price_recent:.2f} CNY</p>"
+            recent_cost_analysis_html += "<ul style='list-style-type: none; padding-left: 0;'>"
+
+            results = {} # 存储不同策略的计算结果
+
+            # --- 1. 实际策略信号 ---
+            strategy_purchases_recent = df_recent[df_recent['采购信号']]
+            strategy_points = len(strategy_purchases_recent)
+            if strategy_points > 0:
+                avg_strategy_cost_recent = safe_float(strategy_purchases_recent['Price'].mean())
+                if avg_market_price_recent > 0:
+                    advantage_rate = ((avg_market_price_recent - avg_strategy_cost_recent) / avg_market_price_recent) * 100
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                results['实际策略信号'] = (f"{avg_strategy_cost_recent:.2f}", advantage_text, strategy_points)
+            else:
+                results['实际策略信号'] = ("N/A", "无采购", 0)
+
+            # --- 2. 低于短期阈值 ---
+            short_thresh_buys = df_recent[df_recent['工业指标'] < df_recent['基线阈值_短']]
+            short_points = len(short_thresh_buys)
+            if short_points > 0:
+                avg_short_thresh_cost = safe_float(short_thresh_buys['Price'].mean())
+                if avg_market_price_recent > 0:
+                    advantage_rate = ((avg_market_price_recent - avg_short_thresh_cost) / avg_market_price_recent) * 100
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                results['低于短期阈值'] = (f"{avg_short_thresh_cost:.2f}", advantage_text, short_points)
+            else:
+                 results['低于短期阈值'] = ("N/A", "无触发", 0)
+
+            # --- 3. 低于中期阈值 ---
+            mid_thresh_buys = df_recent[df_recent['工业指标'] < df_recent['基线阈值']]
+            mid_points = len(mid_thresh_buys)
+            if mid_points > 0:
+                avg_mid_thresh_cost = safe_float(mid_thresh_buys['Price'].mean())
+                if avg_market_price_recent > 0:
+                    advantage_rate = ((avg_market_price_recent - avg_mid_thresh_cost) / avg_market_price_recent) * 100
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                results['低于中期阈值'] = (f"{avg_mid_thresh_cost:.2f}", advantage_text, mid_points)
+            else:
+                results['低于中期阈值'] = ("N/A", "无触发", 0)
+
+            # --- 4. 低于长期阈值 ---
+            long_thresh_buys = df_recent[df_recent['工业指标'] < df_recent['基线阈值_长']]
+            long_points = len(long_thresh_buys)
+            if long_points > 0:
+                avg_long_thresh_cost = safe_float(long_thresh_buys['Price'].mean())
+                if avg_market_price_recent > 0:
+                    advantage_rate = ((avg_market_price_recent - avg_long_thresh_cost) / avg_market_price_recent) * 100
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                results['低于长期阈值'] = (f"{avg_long_thresh_cost:.2f}", advantage_text, long_points)
+            else:
+                results['低于长期阈值'] = ("N/A", "无触发", 0)
+
+            # 构建 HTML 表格展示结果
+            recent_cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
+            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th>近期平均采购成本 (CNY)</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            for name, (cost, adv_rate, points) in results.items():
+                 # 为优势率添加悬停解释
+                 adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
+                 recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
+            recent_cost_analysis_html += "</tbody></table>"
+
+        else:
+            recent_cost_analysis_html += f"<p><em>无法进行分析：缺少必要的列 ({', '.join(missing_recent_cols)})</em></p>"
+    else:
+        recent_cost_analysis_html += f"<p><em>数据不足 ({len(df)} 天)，无法进行 {N_DAYS_RECENT} 天成本效益分析。</em></p>"
+
+    recent_cost_analysis_html += "</ul>" # 结束无序列表（虽然现在是表格）
+    # +++ 结束新增计算 +++
+
+    report_html += recent_cost_analysis_html
 
     report_html += "</div>" # Close main div
 
