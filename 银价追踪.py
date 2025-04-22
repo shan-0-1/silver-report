@@ -18,19 +18,42 @@ def calculate_final_metrics(df_pass1_output, baseline_quantile=0.3631):
     """
     df_final = df_pass1_output.copy() # Start with Pass 1 results
 
-    # --- 1. Calculate correct signal history metrics based on preliminary_signal ---
-    df_final['signal_flag'] = df_final['preliminary_signal'].astype(int)
-    # Calculate groups based on signal_flag to determine resets
-    # Group changes when signal turns OFF (goes from True to False)
-    df_final['group_resetting'] = (~(df_final['signal_flag'].astype(bool))).cumsum()
-    df_final['days_since_last'] = df_final.groupby('group_resetting').cumcount()
+    # --- 1. Calculate correct days_since_last based on preliminary_signal ---
+    df_final['signal_flag'] = df_final['preliminary_signal'].astype(bool)
+
+    # Find the index of the last True signal for each row
+    # Get indices where signal is True
+    true_signal_indices = df_final.index[df_final['signal_flag']]
+
+    # Use numpy's searchsorted to find the index of the last signal <= current index
+    # searchsorted requires sorted array (df_final.index is assumed sorted)
+    search_indices = np.searchsorted(true_signal_indices, df_final.index, side='right')
+
+    # Map each row's index to the index of the last signal
+    # If search_indices[i] is 0, it means no prior signal, handle this case
+    last_signal_idx_map = np.full(len(df_final), -1, dtype=int) # Initialize with -1 (no signal)
+    valid_search = search_indices > 0
+    # Get the index from true_signal_indices corresponding to the found position
+    last_signal_idx_map[valid_search] = true_signal_indices[search_indices[valid_search] - 1]
+
+    # Calculate days since last signal
+    # If last_signal_idx_map is -1, it means no signal occurred before or on this day
+    # In this case, days since last should be large (e.g., row index + 1)
+    df_final['days_since_last'] = np.where(
+        last_signal_idx_map == -1,
+        df_final.index + 1, # Days since the beginning (effectively infinite history)
+        df_final.index - last_signal_idx_map # Days since the last signal
+    )
 
     # Calculate adjustment cycles (start decay after 6 days of no signal)
+    # days_since_last = 0 on signal day, 1 on day after, ..., 6 on 6th day after
+    # Decay starts when days_since_last >= 7 (i.e., 7th day after signal)
     df_final['adjustment_cycles'] = np.where(
         df_final['days_since_last'] >= 7,
         df_final['days_since_last'] - 6,
         0
     )
+    # --- End revised calculation ---
 
     # --- 2. Calculate FINAL dynamic windows ---
     df_final['动态短窗口'] = (BASE_WINDOW_SHORT *
@@ -483,9 +506,9 @@ def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加
     df['动态长窗口'] = pd.to_numeric(df['动态长窗口'], errors='coerce').fillna(MIN_WINDOW_SHORT * 2).astype(int)
     # 动态长窗口也要确保最低值
     min_long_window = df['动态短窗口'] * 2 # 这是一个 Series
-    # --- 修正：使用 np.maximum 进行元素级比较 ---
+    # --- 修正：使用 np.maximum 进行元素级比较 --- 
     df['动态长窗口'] = np.maximum(df['动态长窗口'], min_long_window)
-    # --- 结束修正 ---
+    # --- 结束修正 --- 
 
     # --- 修改：使用列表推导实现真正的动态长窗口均线 ---
     df['SMA动态长'] = [
@@ -742,30 +765,26 @@ def peak_filter(df):
     price_diff = df['Price'].diff(3)
     price_diff_shifted_filled = price_diff.shift(1).fillna(0)
     # --- 使用滚动均值可能更合理，但暂时保持全局均值 --- 
-    price_diff_mean = df['Price'].diff(3).mean() 
-    #price_diff_mean_filled = price_diff.dropna().mean() if not price_diff.dropna().empty else 0 # 旧方式
+    price_diff_mean = df['Price'].diff(3).mean()
     price_diff_mean_filled = price_diff_mean if pd.notna(price_diff_mean) else 0 # 使用计算出的均值
     price_diff_filled = price_diff.fillna(0)
     peak_condition = (price_diff_shifted_filled > price_diff_mean_filled) & (price_diff_filled < 0)
 
     # ATR ratio filter (use generic column names)
-    # Ensure the generic columns exist before using them
     if 'filter_atr_upper' not in df.columns or 'filter_atr_lower' not in df.columns:
         print("警告: peak_filter 缺少 'filter_atr_upper' 或 'filter_atr_lower' 列，跳过 ATR 过滤。")
         overbought_atr = pd.Series([False] * len(df)) # Default to not overbought if columns missing
     else:
-        # --- 修正：使用 filter_atr_upper 和 filter_atr_lower --- 
         atr_denominator = (df['filter_atr_upper'] - df['filter_atr_lower']).replace(0, np.nan)
-        # --- 结束修正 ---
-        # Ensure price and lower bound are numeric before subtraction
         price_numeric = pd.to_numeric(df['Price'], errors='coerce')
         lower_bound_numeric = pd.to_numeric(df['filter_atr_lower'], errors='coerce')
-        # Calculate numerator only where both are valid numbers
         numerator = price_numeric - lower_bound_numeric
 
         atr_ratio = numerator / atr_denominator
         atr_ratio_filled = atr_ratio.fillna(0.5) # Use neutral value for NaNs
+        # --- 移动到 else 块内部 --- 
         overbought_atr = atr_ratio_filled > 0.8
+        # --- 结束移动 ---
 
     # Ensure result is boolean Series
     return ~(peak_condition | overbought_atr).astype(bool)
@@ -788,19 +807,23 @@ def process_signals(df_final_unprocessed): # Input is df with final unprocessed 
     # Example: interval=2 -> check rolling(1).max() on shift(1) -> checks yesterday's signal
     # Example: interval=3 -> check rolling(2).max() on shift(1) -> checks yesterday and day before
     if MIN_PURCHASE_INTERVAL > 1:
+        # --- Corrected Indentation --- 
         signal_shifted_int = signal_int_for_shift.shift(1).fillna(0)
         # Rolling window size is interval - 1 because shift(1) already moved one day back
         shifted = signal_shifted_int.rolling(
             window=MIN_PURCHASE_INTERVAL - 1, min_periods=1
         ).max().astype(bool)
         processed_df['采购信号'] = processed_df['采购信号'] & ~shifted
+        # --- End Correction ---
     elif MIN_PURCHASE_INTERVAL == 1:
          # Original logic prevented back-to-back signals even for interval=1.
          # If interval=1 means allow back-to-back, this entire block can be skipped.
          # Let's assume interval=1 still means no back-to-back for now.
+         # --- Corrected Indentation --- 
          signal_shifted_int = signal_int_for_shift.shift(1).fillna(0)
          signal_shifted = signal_shifted_int.astype(bool)
          processed_df['采购信号'] = processed_df['采购信号'] & ~signal_shifted
+         # --- End Correction ---
 
     # --- REMOVE signal streak limit (optional, was complex/possibly redundant) ---
     # signal_int = processed_df['采购信号'].astype(int)
@@ -1003,15 +1026,33 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     # 简化 title 属性的引号
     report_html += f"<li title='{HOVER_TEXTS['cond_score'].replace('\"','&quot;')}'>核心条件满足数量：{condition_scores}/6 ({'<span style=\"color:green;\">达标 (≥4)</span>' if base_req_met else '<span style=\"color:red;\">未达标 (<4)</span>'})</li>"
 
-    peak_filter_series = peak_filter(df)
-    peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True
+    # --- 为 peak_filter 准备列 --- 
+    df_report_copy = df.copy() # Operate on a copy to avoid modifying original df for report
+    if '波动上轨' in df_report_copy.columns and '波动下轨' in df_report_copy.columns:
+        df_report_copy['filter_atr_upper'] = df_report_copy['波动上轨']
+        df_report_copy['filter_atr_lower'] = df_report_copy['波动下轨']
+        peak_filter_series = peak_filter(df_report_copy)
+        peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True
+    else:
+        print("警告：generate_report 中缺少波动上/下轨列，无法执行 peak_filter。")
+        peak_filter_passed = True # Assume filter passes if bands are missing
+    # --- 结束准备 --- 
+
+    #peak_filter_series = peak_filter(df) # Original call
+    #peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True # Original logic
     peak_status_text = '<span style="color:green;">未触发阻断</span>' if peak_filter_passed else '<span style="color:red;">触发阻断</span>'
+    #atr_upper = safe_float(current.get('波动上轨', price * 1.05)) # Get final ATR upper from current row
+    #atr_lower = safe_float(current.get('波动下轨', price * 0.95))
+    # --- 从 df_report_copy 获取 atr_upper/lower 以确保一致性 ---
+    current_report_row = df_report_copy.iloc[-1]
+    atr_upper = safe_float(current_report_row.get('filter_atr_upper', price * 1.05))
+    atr_lower = safe_float(current_report_row.get('filter_atr_lower', price * 0.95))
+    # --- 结束获取 --- 
     atr_denominator = atr_upper - atr_lower
     atr_value = ((price - atr_lower) / atr_denominator) * 100 if atr_denominator != 0 else 50.0
     atr_overbought = atr_value > 80
-    atr_status_text = '<span style="color:red;">超买区域 (>80%)</span>' if atr_overbought else f'{atr_value:.1f}%'
     # 简化 title 属性的引号
-    report_html += f"<li title='一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：形态 {peak_status_text} | ATR通道位置 {atr_status_text}</li>"
+    report_html += f"<li title='一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：形态 {peak_status_text} | ATR通道位置 {atr_value:.1f}%</li>"
 
     last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
     interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
@@ -1475,10 +1516,10 @@ def create_visualization(df, optimized_rsi_threshold):
                              # --- 修改：更新图例名称 ---
                              name='指标<长期阈值区域', # 简洁图例名
                              # --- 结束修改 ---
-                             # legendgroup='indicator', legendrank=12,
+                             # legendgroup='indicator', legendrank=12, 
                              hovertemplate=hovertemplate_fill # 悬停文本可以保持不变，因为它显示的是指标值
                              ), row=2, col=1)
-
+    
     fig.add_hline(y=1.0, line_dash="dot", line_color="gray", annotation_text="指标参考基准=1", row=2, col=1)
 
 
@@ -1827,7 +1868,7 @@ if __name__ == "__main__":
     # --- 6.1 预先构建动态"今日解读"部分的 HTML --- Check if analysis_data exists
     today_interpretation_html = '<p>今日解读数据不可用。</p>' # Default message
     if analysis_data:
-        # (rest of the interpretation HTML build logic using analysis_data - assuming it's okay)
+        # --- Corrected Indentation Starts Here ---
         today_interpretation_html = f'''
             <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data.get('current_date', pd.Timestamp.now()).strftime('%Y-%m-%d')}) 的策略信号解读：</h3>
             <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购 ({})</span>'.format(analysis_data.get('signal_strength', '')) if analysis_data.get('signal', False) else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
@@ -1835,23 +1876,26 @@ if __name__ == "__main__":
             <ul>
                 <li>核心条件满足数量：<strong>{analysis_data.get('condition_scores', 'N/A')} / 6</strong> (策略要求至少满足 4 项)。</li>
                 <li>信号阻断检查：{analysis_data.get('peak_status_display', 'N/A')} 且 {analysis_data.get('interval_check_text', 'N/A')}。</li>
-        '''
+            </ul> 
+        ''' # End initial f-string assignment, but building continues
+
         if analysis_data.get('signal', False):
-             # ... (HTML for signal True) ...
-              today_interpretation_html += f'''<li>关键指标状态：
-                    <ul>
-                        <li>核心工业指标: {analysis_data.get('indicator_diff_desc', 'N/A')}。</li>
-                        <li>市场动量 (RSI): {analysis_data.get('rsi_diff_desc', 'N/A')}。</li>
-                        {'<li>其余 {} 项辅助条件也满足要求。</li>'.format(analysis_data.get('condition_scores', 0) - 2) if analysis_data.get('condition_scores', 0) > 2 else ''}
-                    </ul>
-                </li>
-                <li><strong>结论：</strong><span style="color:green;">由于关键买入指标进入策略目标区域，满足了 {analysis_data.get('condition_scores', 'N/A')} 项核心条件，并且无明确的信号阻断因素，策略判定当前形成 <strong>{analysis_data.get('signal_strength', '边缘')}</strong> 的采购信号。</span></li>
+            # Build HTML for signal True case
+            today_interpretation_html += f'''
+            <li>关键指标状态：
+                <ul>
+                    <li>核心工业指标: {analysis_data.get('indicator_diff_desc', 'N/A')}。</li>
+                    <li>市场动量 (RSI): {analysis_data.get('rsi_diff_desc', 'N/A')}。</li>
+                    {'<li>其余 {} 项辅助条件也满足要求。</li>'.format(analysis_data.get('condition_scores', 0) - 2) if analysis_data.get('condition_scores', 0) > 2 else ''}
+                </ul>
+            </li>
+            <li><strong>结论：</strong><span style="color:green;">由于关键买入指标进入策略目标区域，满足了 {analysis_data.get('condition_scores', 'N/A')} 项核心条件，并且无明确的信号阻断因素，策略判定当前形成 <strong>{analysis_data.get('signal_strength', '边缘')}</strong> 的采购信号。</span></li>
             '''
         else: # 如果是观望
+            # Build HTML for signal False case
             unmet_conditions_list = ''
-            # Safely access conditions_met dictionary
             conditions_met = analysis_data.get('current_conditions_met', {})
-            if not conditions_met.get('cond1', True): # Default to True if missing to avoid listing
+            if not conditions_met.get('cond1', True):
                 unmet_conditions_list += f'<li>核心工业指标: {analysis_data.get("indicator_diff_desc", "N/A")}.</li>'
             if not conditions_met.get('cond2', True):
                  unmet_conditions_list += f'<li>市场动量 (RSI): {analysis_data.get("rsi_diff_desc", "N/A")}.</li>'
@@ -1864,15 +1908,12 @@ if __name__ == "__main__":
             if not conditions_met.get('cond6', True):
                 unmet_conditions_list += f'<li>波动性({analysis_data.get("volatility", 0):.3f}) 高于动态阈值({analysis_data.get("vol_threshold", 0):.3f}).</li>'
 
-
             if not unmet_conditions_list and not analysis_data.get('base_req_met', False):
                  unmet_conditions_list = f"<li>核心条件满足数量不足 ({analysis_data.get('condition_scores', 'N/A')}/6)。</li>"
             elif not unmet_conditions_list:
                  unmet_conditions_list = "<li>所有核心条件均满足，观望是由于信号阻断规则。</li>"
 
-
             today_interpretation_html += f'<li>当前未能满足买入要求的主要条件：<ul>{unmet_conditions_list}</ul></li>'
-
 
             blocking_issues = analysis_data.get('block_reasons', [])
             conclusion_text = ''
@@ -1880,21 +1921,16 @@ if __name__ == "__main__":
                 conclusion_text = '信号因以下规则被阻断：' + '； '.join(blocking_issues) + '。'
             elif not analysis_data.get('base_req_met', False):
                  conclusion_text = f"由于仅满足 {analysis_data.get('condition_scores', 'N/A')}/6 项核心条件，未能达到策略要求的最低数量。"
-            # else: # Removed this case as it might be covered by blocking_issues or unmet_conditions
-            #     conclusion_text = f"虽满足 {analysis_data.get('condition_scores', 'N/A')}/6 项核心条件，但可能存在其他未明确的阻断因素。"
-
 
             today_interpretation_html += f'<li><strong>结论：</strong><span style="color:red;">{conclusion_text} 因此，策略建议暂时持币观望。</span></li>'
 
+        today_interpretation_html += '</ul>' # Close the <ul> started in the initial assignment
 
-        today_interpretation_html += '</ul>'
+    # This else corresponds to the outer 'if analysis_data:'
+    # If analysis_data is None or False, the default message remains.
+    # The previous code had an extra 'else:' here which was removed.
 
-
-    else: # analysis_data was None or generate_report failed
-        today_interpretation_html = '<p style="color:red;">无法生成今日解读，因为报告数据未能成功获取。</p>'
-        # ... (HTML for interpretation unavailable) ...
     # --- 6.1 结束预构建 ---
-
 
     # --- 6.2 构建最终 HTML，插入预构建的部分 --- (Add safety checks)
     final_html = f"""
@@ -1938,38 +1974,38 @@ if __name__ == "__main__":
             <h3>图表元素解析</h3>
             { # Logic for description - needs to be checked if MIN_PURCHASE_INTERVAL is available
               f"""
-              <p>以下是对图表中主要线条和标记的解释：</p>
-              <ul>
-                   <li><strong>上图 (价格与信号):</strong>
-                      <ul>
-                          <li><u>价格线 (深蓝)</u>: 代表每日的白银收盘价。这是所有分析的基础。</li>
-                          <li><u>短期均线 (橙虚线)</u>: 计算指定周期内（例如{BASE_WINDOW_SHORT}天，根据策略动态调整）收盘价的算术平均值。它能平滑短期价格波动，帮助识别近期趋势方向。价格穿越均线常被视为趋势可能改变的信号。</li>
-                          <li><u>EMA线 (红/绿细线)</u>: 指数移动平均线。与普通均线类似，但对更近期的价格赋予更高权重。这意味着EMA对价格变化的反应比普通均线更快，常用于捕捉更短期的趋势变化。</li>
-                          <li><u>采购信号 (▲ 红三角)</u>: 当下方描述的所有策略买入条件均满足时，此标记出现。</li>
-                          <li><u>EMA交叉 (↑ 绿 / ↓ 红)</u>: 标记EMA9线与EMA21线发生视觉交叉的确切位置。↑代表金叉(EMA9上穿)，↓代表死叉(EMA9下穿)。</li>
-                      </ul>
-                  </li>
-                  <li><strong>中图 (策略核心指标):</strong>
-                      <ul>
-                          <li><u>核心工业指标 (蓝色实线)</u>: 这是本策略定制的一个综合指标。其计算综合考虑了当前价格与其短期、长期移动平均线的偏离程度，并结合了近期市场波动性（通过\"动量因子\"衡量）。其核心思想是：当价格相对其历史均值偏低，且市场波动性不高时，该指标值会较低，策略倾向于认为此时潜在的买入价值可能更高。</li>
-                          <li><u>阈值线 (红色虚线等)</u>: 这些是根据近期\"核心工业指标\"的历史分布动态计算出来的参考线（通常是某个分位数，如25%分位数）。它们代表了策略认为的\"相对便宜\"的区域边界。当蓝色指标线低于关键的红色阈值线时，满足了策略的一个主要入场条件。</li>
+            <p>以下是对图表中主要线条和标记的解释：</p>
+            <ul>
+                 <li><strong>上图 (价格与信号):</strong>
+                    <ul>
+                        <li><u>价格线 (深蓝)</u>: 代表每日的白银收盘价。这是所有分析的基础。</li>
+                        <li><u>短期均线 (橙虚线)</u>: 计算指定周期内（例如{BASE_WINDOW_SHORT}天，根据策略动态调整）收盘价的算术平均值。它能平滑短期价格波动，帮助识别近期趋势方向。价格穿越均线常被视为趋势可能改变的信号。</li>
+                        <li><u>EMA线 (红/绿细线)</u>: 指数移动平均线。与普通均线类似，但对更近期的价格赋予更高权重。这意味着EMA对价格变化的反应比普通均线更快，常用于捕捉更短期的趋势变化。</li>
+                        <li><u>采购信号 (▲ 红三角)</u>: 当下方描述的所有策略买入条件均满足时，此标记出现。</li>
+                        <li><u>EMA交叉 (↑ 绿 / ↓ 红)</u>: 标记EMA9线与EMA21线发生视觉交叉的确切位置。↑代表金叉(EMA9上穿)，↓代表死叉(EMA9下穿)。</li>
+                    </ul>
+                </li>
+                <li><strong>中图 (策略核心指标):</strong>
+                    <ul>
+                        <li><u>核心工业指标 (蓝色实线)</u>: 这是本策略定制的一个综合指标。其计算综合考虑了当前价格与其短期、长期移动平均线的偏离程度，并结合了近期市场波动性（通过\"动量因子\"衡量）。其核心思想是：当价格相对其历史均值偏低，且市场波动性不高时，该指标值会较低，策略倾向于认为此时潜在的买入价值可能更高。</li>
+                        <li><u>阈值线 (红色虚线等)</u>: 这些是根据近期\"核心工业指标\"的历史分布动态计算出来的参考线（通常是某个分位数，如25%分位数）。它们代表了策略认为的\"相对便宜\"的区域边界。当蓝色指标线低于关键的红色阈值线时，满足了策略的一个主要入场条件。</li>
                           <li><u>指标&lt;长期阈值区域 (淡绿填充)</u>: 图示核心工业指标低于其长期阈值线的区域。</li>
-                      </ul>
-                  </li>
-                  <li><strong>下图 (市场动量指标 - RSI):</strong>
-                      <ul>
+                    </ul>
+                </li>
+                <li><strong>下图 (市场动量指标 - RSI):</strong>
+                    <ul>
                           <li><u>修正RSI (紫色实线)</u>: 相对强弱指数（Relative Strength Index）。它通过比较一定时期内（通常是14天）价格上涨日和下跌日的平均涨跌幅度，来衡量市场买卖双方的力量对比，反映市场的景气程度。RSI的值域在0-100之间。通常认为，当RSI低于某个阈值（如此策略中的{optimized_rsi_threshold}）时，市场可能处于\"超卖\"状态，即下跌可能过度，短期内价格有反弹的可能性；反之，高于某个阈值（如70或80）则可能表示\"超买\"。策略利用RSI的超卖信号作为另一个关键的入场条件。</li>
                            <li><u>动态RSI阈值 (橙虚线)</u>: 基于近期RSI计算的动态阈值线。</li>
                            <li><u>RSI超卖参考线 (红点线)</u>: 当前策略使用的固定RSI买入阈值 ({optimized_rsi_threshold})。</li>
-                      </ul>
-                  </li>
-              </ul>
+                    </ul>
+                </li>
+            </ul>
               <h3>策略信号生成逻辑 (已重构)</h3>
-               <p>策略生成采购信号 (▲) 需同时满足两大类条件：</p>
-              <ol>
+             <p>策略生成采购信号 (▲) 需同时满足两大类条件：</p>
+            <ol>
                   <li><strong>核心条件达标：</strong>综合考量核心工业指标、RSI、价格与均线/通道关系、市场波动性等多个维度，需达到预设的触发数量（当前为至少4项）。这些指标现在基于考虑了信号历史的动态窗口进行计算。</li>
                   <li><strong>无信号阻断：</strong>排除近期不利价格形态、ATR超买以及过于频繁的信号（需满足最小间隔天数，当前为{MIN_PURCHASE_INTERVAL}天）。</li>
-              </ol>
+            </ol>
               """
              }
 
