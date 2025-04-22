@@ -8,9 +8,9 @@ from plotly.subplots import make_subplots
 import plotly.io as pio # 引入 plotly.io 用于 HTML 导出
 import subprocess # 用于执行 Git 命令
 import datetime # 用于生成提交信息时间戳
-import optuna # <--- 新增: 导入 Optuna
+#import optuna  <--- 新增: 导入 Optuna
 import traceback # <--- 新增：用于打印详细错误信息
-import time
+
 
 # --- 保留用于查找数据文件的打包相关代码 ---
 # (虽然我们不再打包成 EXE, 但保留此逻辑无害，且万一以后需要此脚本在打包环境运行其他任务时有用)
@@ -25,7 +25,7 @@ BASE_WINDOW_SHORT = 30
 BASE_WINDOW_LONG = 90
 MIN_WINDOW_SHORT = 5
 WINDOW_DECAY_RATE = 0.9
-MIN_PURCHASE_INTERVAL = 1
+MIN_PURCHASE_INTERVAL = 2
 
 HISTORY_WINDOW_SHORT = 24
 HISTORY_WINDOW = HISTORY_WINDOW_SHORT * 2
