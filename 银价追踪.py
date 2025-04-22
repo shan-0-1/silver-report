@@ -428,6 +428,14 @@ def process_signals(df):
         processed_df['动态短窗口']
     )
 
+    # --- 新增：在采购信号为 True 时，也将动态长窗口重置为基准值 ---
+    processed_df['动态长窗口'] = np.where(
+        processed_df['采购信号'],
+        BASE_WINDOW_LONG, # 使用全局常量
+        processed_df['动态长窗口']
+    )
+    # --- 结束新增 ---
+
     # 放宽连续信号限制 (使用 transform('sum') 可能更符合原意，如果 streak 是指组内总数)
     # 如果 streak 是指连续计数，用 transform('cumsum')
     # 假设原意是组内总数限制
@@ -1367,16 +1375,15 @@ if __name__ == "__main__":
     df_report = df_main.copy()
     df_report['采购信号'] = False
 
-    # 2. 计算策略与信号 (传入最终确定的参数)
-    print("正在计算策略与信号 (第一轮 - 最终参数)...")
+    # 2. 计算策略与信号 (单轮计算)
+    print("正在计算策略与信号 (最终参数)...")
     # 明确传入参数
     df_report = calculate_strategy(df_report, baseline_quantile=optimized_quantile)
     df_report = generate_signals(df_report, rsi_threshold=optimized_rsi_threshold)
-    print("正在计算策略与信号 (第二轮 - 最终参数)...")
-    df_report_r1_copy = df_report.copy()
-    # 明确传入参数
-    df_report_r2 = calculate_strategy(df_report_r1_copy, baseline_quantile=optimized_quantile)
-    df_report = generate_signals(df_report_r2, rsi_threshold=optimized_rsi_threshold)
+    # --- 新增：调用 process_signals --- 
+    print("正在处理和过滤信号...")
+    df_report = process_signals(df_report) 
+    # --- 结束新增 ---
 
     # 3. 生成主报告数据
     print("正在生成主报告数据...")
