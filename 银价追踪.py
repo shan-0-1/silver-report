@@ -11,8 +11,244 @@ import datetime # 用于生成提交信息时间戳
 #import optuna  <--- 新增: 导入 Optuna
 import traceback # <--- 新增：用于打印详细错误信息
 
+def calculate_final_metrics(df_pass1_output, baseline_quantile=0.3631):
+    """
+    Pass 2: Calculate final metrics using correct dynamic windows based on preliminary signals.
+    Recalculates metrics dependent on dynamic windows.
+    """
+    df_final = df_pass1_output.copy() # Start with Pass 1 results
+
+    # --- 1. Calculate correct signal history metrics based on preliminary_signal ---
+    df_final['signal_flag'] = df_final['preliminary_signal'].astype(int)
+    # Calculate groups based on signal_flag to determine resets
+    # Group changes when signal turns OFF (goes from True to False)
+    df_final['group_resetting'] = (~(df_final['signal_flag'].astype(bool))).cumsum()
+    df_final['days_since_last'] = df_final.groupby('group_resetting').cumcount()
+
+    # Calculate adjustment cycles (start decay after 6 days of no signal)
+    df_final['adjustment_cycles'] = np.where(
+        df_final['days_since_last'] >= 7,
+        df_final['days_since_last'] - 6,
+        0
+    )
+
+    # --- 2. Calculate FINAL dynamic windows ---
+    df_final['动态短窗口'] = (BASE_WINDOW_SHORT *
+                            (WINDOW_DECAY_RATE ** df_final['adjustment_cycles'])
+                           ).astype(int).clip(lower=MIN_WINDOW_SHORT)
+
+    # Ensure dynamic short window is numeric and clipped again just in case
+    df_final['动态短窗口'] = pd.to_numeric(df_final['动态短窗口'], errors='coerce').fillna(MIN_WINDOW_SHORT).astype(int)
+    df_final['动态短窗口'] = df_final['动态短窗口'].clip(lower=MIN_WINDOW_SHORT)
+
+    df_final['动态长窗口'] = (BASE_WINDOW_LONG *
+                            (WINDOW_DECAY_RATE ** df_final['adjustment_cycles'])
+                           ).astype(int) # Clip happens below
+
+    # Ensure dynamic long window is numeric and at least 2x short window
+    df_final['动态长窗口'] = pd.to_numeric(df_final['动态长窗口'], errors='coerce').fillna(MIN_WINDOW_SHORT * 2).astype(int)
+    min_long_window = df_final['动态短窗口'] * 2
+    df_final['动态长窗口'] = np.maximum(df_final['动态长窗口'], min_long_window)
+
+
+    # --- 3. Recalculate metrics DEPENDENT on FINAL dynamic windows ---
+
+    # SMA动态短 (using list comprehension for true dynamic)
+    print("Calculating final SMA Dynamic Short...") # Add print for long steps
+    df_final['SMA动态短'] = [
+        df_final['Price'].iloc[max(0, i - int(w) + 1):i + 1].mean()
+        for i, w in enumerate(df_final['动态短窗口'])
+    ]
+
+    # SMA动态长 (using list comprehension for true dynamic)
+    print("Calculating final SMA Dynamic Long...")
+    df_final['SMA动态长'] = [
+        df_final['Price'].iloc[max(0, i - int(w) + 1):i + 1].mean()
+        for i, w in enumerate(df_final['动态长窗口'])
+    ]
+
+    # 动量因子 (using true dynamic short window)
+    print("Calculating final Momentum Factor...")
+    momentum_values = []
+    prices = df_final['Price'].values # Access as numpy array for potential speedup
+    dynamic_short_windows = df_final['动态短窗口'].values
+
+    for i in range(len(df_final)):
+        window = int(dynamic_short_windows[i])
+        start_idx = max(0, i - window + 1)
+        if start_idx < i: # Need at least 2 points for pct_change
+            price_slice = prices[start_idx : i + 1]
+            if len(price_slice) > 1:
+                 # Use np.diff for efficiency, handle division by zero in price
+                 denominator = price_slice[:-1]
+                 # Avoid division by zero or near-zero
+                 safe_denominator = np.where(np.abs(denominator) < 1e-9, 1e-9, denominator)
+                 pct_changes = np.abs(np.diff(price_slice) / safe_denominator)
+                 # Handle potential NaNs or Infs resulting from calculation
+                 pct_changes = np.nan_to_num(pct_changes, nan=0.0, posinf=0.0, neginf=0.0)
+                 momentum_values.append(np.mean(pct_changes))
+            else:
+                 momentum_values.append(0.0) # Or np.nan
+        else:
+            momentum_values.append(0.0) # Or np.nan
+
+    df_final['动量因子'] = pd.Series(momentum_values, index=df_final.index).fillna(0)
+
+
+    # --- 4. Recalculate 工业指标 using FINAL dynamic metrics ---
+    print("Calculating final Industrial Indicator...")
+    sma_short_safe = pd.to_numeric(df_final['SMA动态短'], errors='coerce').replace(0, np.nan)
+    sma_long_safe = pd.to_numeric(df_final['SMA动态长'], errors='coerce').replace(0, np.nan)
+
+    df_final['工业指标'] = (df_final['Price'] / sma_short_safe) * \
+                         (df_final['Price'] / sma_long_safe) * \
+                         (1 - df_final['动量因子']) # Use final momentum
+    df_final['工业指标'] = df_final['工业指标'].fillna(1.0)
+
+
+    # --- 5. Recalculate Thresholds using FINAL 工业指标 ---
+    print("Calculating final Thresholds...")
+    df_final['基线阈值_短'] = df_final['工业指标'].rolling(
+        HISTORY_WINDOW_SHORT, min_periods=2
+    ).quantile(baseline_quantile).ffill().clip(0.3, 2.0)
+
+    df_final['基线阈值'] = df_final['工业指标'].rolling(
+        HISTORY_WINDOW, min_periods=2
+    ).quantile(baseline_quantile).ffill().clip(0.3, 2.0)
+
+    df_final['基线阈值_长'] = df_final['工业指标'].rolling(
+        HISTORY_WINDOW_LONG, min_periods=2
+    ).quantile(baseline_quantile).ffill().clip(0.3, 2.0)
+
+    # --- 6. Recalculate other metrics dependent on the now-final dynamic values ---
+
+    # Volatility bands (use final SMA动态短)
+    # Ensure ATR exists from Pass 1
+    if 'ATR' not in df_final.columns:
+         # Recalculate if missing, though it should be there
+         df_final['ATR'] = df_final['Price'].rolling(14).apply(lambda x: np.ptp(x) if len(x)>1 else 0, raw=True).shift(1).fillna(0)
+
+    df_final['波动上轨'] = df_final['SMA动态短'] + 1.5 * df_final['ATR']
+    df_final['波动下轨'] = df_final['SMA动态短'] - 0.7 * df_final['ATR']
+
+    # Dynamic EMA threshold (use final 动量因子)
+    df_final['dynamic_ema_threshold'] = 1 + (0.5 * df_final['动量因子']) # Use final momentum
+
+    # Bollinger Bands width adjustment (use final 动量因子)
+    # Ensure 布林中轨 exists from Pass 1
+    if '布林中轨' not in df_final.columns:
+        df_final['布林中轨'] = df_final['Price'].rolling(20).mean().fillna(df_final['Price'])
+
+    # Re-calculate rolling_std for safety
+    rolling_std = df_final['Price'].rolling(20).std().fillna(0)
+    df_final['布林上轨'] = df_final['布林中轨'] + (2 * rolling_std * (1 + df_final['动量因子'])) # Use final momentum
+    df_final['布林下轨'] = df_final['布林中轨'] - (2 * rolling_std * (1 - df_final['动量因子'])) # Use final momentum
+
+    # Low Volatility threshold (use final 动量因子)
+    df_final['低波动阈值'] = df_final['动量因子'].rolling(45).quantile(0.35).ffill().fillna(0.01)
+
+
+    # --- 7. Final Data Cleaning & Column Management ---
+    # Ensure all necessary columns for final signal generation, report, viz are present
+    # Drop intermediate columns from Pass 1 if desired (e.g., _fixed, _initial)
+    # Also drop helper columns like signal_flag, group_resetting
+    cols_to_drop = [col for col in df_final.columns if '_fixed' in col or '_initial' in col or '_resetting' in col or col == 'signal_flag']
+    # Keep preliminary_signal for now, might be useful for debugging/comparison
+    # cols_to_drop.append('preliminary_signal')
+    df_final = df_final.drop(columns=cols_to_drop, errors='ignore') # Use errors='ignore' in case columns were already dropped
+
+    # Final fillna
+    df_final = df_final.ffill().bfill()
+    # Fill specific columns again after all calculations
+    df_final = df_final.fillna({
+        '修正RSI': 50, '动量因子': 0, 'ATR': 0, '工业指标': 1.0,
+        'SMA动态短': df_final['Price'], 'SMA动态长': df_final['Price'], # Sensible defaults
+        '波动上轨': df_final['Price'], '波动下轨': df_final['Price'],
+        '布林上轨': df_final['Price'], '布林下轨': df_final['Price'],
+        # Ensure other key columns have fallbacks if needed
+    })
+
+    print("Final metric calculation complete.")
+    return df_final
+
+
+# --- 新增：Pass 2 最终信号生成 ---
+def generate_final_signals(df_final_metrics, rsi_threshold=33):
+    """
+    Pass 2: Generate final signals based on the finalized metrics.
+    This uses the same core logic as generate_signals but uses final metrics.
+    """
+    df_processed = df_final_metrics.copy() # Use final metrics
+    df_processed['采购信号'] = False # Initialize the final signal column
+
+    # --- NaN Handling for FINAL metrics (double check) ---
+    # (calculate_final_metrics already fills NaNs, this is a safeguard)
+    fill_values = {
+        '工业指标': 1.0, '基线阈值': 1.0, '修正RSI': 50, 'Price': df_processed['Price'].median(),
+        'EMA21': df_processed['Price'].median(), '布林下轨': df_processed['Price'].median() * 0.9,
+        'ema_ratio': 1.0, 'dynamic_ema_threshold': 1.0, '动量因子': 0.01, '低波动阈值': 0.01,
+        '波动上轨': df_processed['Price'].median() * 1.1, # Need these for peak_filter
+        '波动下轨': df_processed['Price'].median() * 0.9
+    }
+    cols_to_fill = {k: v for k, v in fill_values.items() if k in df_processed.columns}
+    df_processed = df_processed.fillna(cols_to_fill)
+
+    # --- Prepare columns for peak_filter using final metric names ---
+    # peak_filter expects 'filter_atr_upper' and 'filter_atr_lower'
+    # Use the FINAL volatility bands calculated in calculate_final_metrics
+    df_processed['filter_atr_upper'] = df_processed['波动上轨']
+    df_processed['filter_atr_lower'] = df_processed['波动下轨']
+
+    # Final core conditions using FINAL metrics
+    try:
+        core_conditions = [
+            df_processed['工业指标'] < df_processed['基线阈值'], # Use final
+            df_processed['修正RSI'] < rsi_threshold,
+            df_processed['Price'] < df_processed['EMA21'],
+            df_processed['Price'] < df_processed['布林下轨'] * 1.05, # Use final
+            # --- 修正：使用最终的 ema_ratio 和 dynamic_ema_threshold ---
+            df_processed['ema_ratio'] > df_processed['dynamic_ema_threshold'], # Use final
+            # --- 结束修正 ---
+            df_processed['动量因子'] < df_processed['低波动阈值'] # Use final
+        ]
+
+        # Ensure boolean type (same check as before)
+        for i, cond in enumerate(core_conditions):
+            if not pd.api.types.is_bool_dtype(cond):
+                core_conditions[i] = pd.to_numeric(cond, errors='coerce').fillna(0).astype(bool)
+
+        # --- 新增: 存储每个条件的结果以便报告 ---
+        for i, cond in enumerate(core_conditions, 1):
+            df_processed[f'core_cond{i}_met'] = cond
+        # --- 结束新增 ---
+
+        base_pass = np.sum(core_conditions, axis=0) >= 4 # Default requirement
+
+        # Apply peak filter (using final ATR bands via filter_atr_upper/lower)
+        peak_filter_result = peak_filter(df_processed)
+        if not pd.api.types.is_bool_dtype(peak_filter_result):
+             peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
+
+        # Generate final unprocessed signal
+        df_processed['采购信号'] = base_pass & peak_filter_result
+
+    except Exception as e:
+        print(f"生成最终信号时出错: {e}")
+        traceback.print_exc()
+        df_processed['采购信号'] = pd.Series([False] * len(df_processed))
+        # Initialize condition columns to False if error occurs
+        for i in range(1, 7):
+            df_processed[f'core_cond{i}_met'] = False
+
+    # --- Clean up temporary peak_filter columns ---
+    df_processed = df_processed.drop(columns=['filter_atr_upper', 'filter_atr_lower'], errors='ignore')
+
+    return df_processed
+# --- 结束定义 ---
 
 # --- 保留用于查找数据文件的打包相关代码 ---
+
+
 # (虽然我们不再打包成 EXE, 但保留此逻辑无害，且万一以后需要此脚本在打包环境运行其他任务时有用)
 if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     BASE_DIR = sys._MEIPASS
@@ -78,6 +314,131 @@ def load_silver_data():
 
 WINDOW_WEIGHT_FACTOR = 0.8  # 窗口参数在决策中的权重占比
 WINDOW_CHANGE_THRESHOLD = 0.2  # 窗口变化显著阈值
+
+
+def calculate_strategy_pass1(df, baseline_quantile=0.3631): # Rename for clarity
+    """Pass 1: Calculate initial metrics using fixed windows where necessary."""
+    df_pass1 = df.copy() # Work on a copy
+
+    # --- REMOVE signal-dependent calculations ---
+    # (No need for days_since_last, adjustment_cycles, etc. here)
+    # --- END REMOVAL ---
+
+    # --- Use FIXED base windows for this pass ---
+    fixed_short_window = BASE_WINDOW_SHORT
+    fixed_long_window = BASE_WINDOW_LONG
+
+    # Calculate SMAs using fixed windows
+    df_pass1['SMA_fixed_short'] = df_pass1['Price'].rolling(
+        window=fixed_short_window, min_periods=1
+    ).mean()
+    df_pass1['SMA_fixed_long'] = df_pass1['Price'].rolling(
+        window=fixed_long_window, min_periods=1
+    ).mean()
+
+    # Calculate Momentum Factor using fixed short window
+    # Use rolling mean of absolute percentage change for momentum factor
+    df_pass1['动量因子_fixed'] = df_pass1['Price'].pct_change().abs().rolling(
+        window=fixed_short_window, min_periods=1
+    ).mean().fillna(0)
+
+
+    # Calculate 工业指标 using fixed window metrics
+    sma_short_safe = pd.to_numeric(df_pass1['SMA_fixed_short'], errors='coerce').replace(0, np.nan)
+    sma_long_safe = pd.to_numeric(df_pass1['SMA_fixed_long'], errors='coerce').replace(0, np.nan)
+
+    df_pass1['工业指标_initial'] = (df_pass1['Price'] / sma_short_safe) * \
+                                 (df_pass1['Price'] / sma_long_safe) * \
+                                 (1 - df_pass1['动量因子_fixed']) # Use fixed momentum
+    df_pass1['工业指标_initial'] = df_pass1['工业指标_initial'].fillna(1.0)
+
+    # Calculate Thresholds based on initial 工业指标
+    df_pass1['基线阈值_短_initial'] = df_pass1['工业指标_initial'].rolling(
+        HISTORY_WINDOW_SHORT, min_periods=2
+    ).quantile(baseline_quantile).ffill().clip(0.3, 2.0)
+
+    df_pass1['基线阈值_initial'] = df_pass1['工业指标_initial'].rolling(
+        HISTORY_WINDOW, min_periods=2
+    ).quantile(baseline_quantile).ffill().clip(0.3, 2.0)
+
+    df_pass1['基线阈值_长_initial'] = df_pass1['工业指标_initial'].rolling(
+        HISTORY_WINDOW_LONG, min_periods=2
+    ).quantile(baseline_quantile).ffill().clip(0.3, 2.0)
+
+    # --- Keep other calculations largely as they were ---
+    # ATR (depends on Price rolling, not dynamic window)
+    # Use rolling apply for ATR calculation
+    df_pass1['ATR'] = df_pass1['Price'].rolling(14).apply(lambda x: np.ptp(x) if len(x)>1 else 0, raw=True).shift(1).fillna(0)
+
+    # --- Note: Volatility bands now based on fixed SMA short ---
+    df_pass1['波动上轨_fixed'] = df_pass1['SMA_fixed_short'] + 1.5 * df_pass1['ATR']
+    df_pass1['波动下轨_fixed'] = df_pass1['SMA_fixed_short'] - 0.7 * df_pass1['ATR']
+
+    # RSI (depends on Price diff rolling, not dynamic window)
+    delta = df_pass1['Price'].diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = -delta.where(delta < 0, 0).rolling(14).mean()
+    # Ensure loss is not zero before division
+    loss_safe = loss.replace(0, np.nan)
+    rs = gain / loss_safe
+    df_pass1['修正RSI'] = 100 - (100 / (1 + rs))
+    df_pass1['修正RSI'] = df_pass1['修正RSI'].fillna(50) # Fill NaN RSI with 50 (neutral)
+
+    # EMAs (depend on Price ewm, not dynamic window)
+    df_pass1['EMA9'] = df_pass1['Price'].ewm(span=9, adjust=False).mean().bfill()
+    df_pass1['EMA21'] = df_pass1['Price'].ewm(span=21, adjust=False).mean().bfill()
+    df_pass1['EMA50'] = df_pass1['Price'].ewm(span=50, adjust=False).mean().bfill()
+
+    # --- EMA comparison logic can stay, uses the calculated EMAs ---
+    df_pass1['ema9_above_ema21'] = df_pass1['EMA9'] > df_pass1['EMA21']
+    ema21_safe = df_pass1['EMA21'].replace(0, np.nan)
+    df_pass1['ema_ratio'] = df_pass1['EMA9'] / ema21_safe
+    df_pass1['ema_ratio'] = df_pass1['ema_ratio'].fillna(1.0)
+    # --- Note: dynamic_ema_threshold now uses fixed momentum ---
+    df_pass1['dynamic_ema_threshold'] = 1 + (0.5 * df_pass1['动量因子_fixed']) # Use fixed momentum
+
+    # --- Bollinger Bands (depend on Price rolling, not dynamic window) ---
+    rolling_std = df_pass1['Price'].rolling(20).std().fillna(0)
+    df_pass1['布林中轨'] = df_pass1['Price'].rolling(20).mean().fillna(df_pass1['Price'])
+    bollinger_mid_safe = df_pass1['布林中轨'].replace(0, np.nan)
+    df_pass1['布林带宽'] = rolling_std / bollinger_mid_safe
+    df_pass1['布林带宽'] = df_pass1['布林带宽'].fillna(0)
+    # --- Note: Bands now use fixed momentum --- Use fixed momentum for bandwidth adjustment
+    df_pass1['布林上轨'] = df_pass1['布林中轨'] + (2 * rolling_std * (1 + df_pass1['动量因子_fixed']))
+    df_pass1['布林下轨'] = df_pass1['布林中轨'] - (2 * rolling_std * (1 - df_pass1['动量因子_fixed']))
+
+    # --- RSI Threshold (depends on RSI rolling, not dynamic window) ---
+    df_pass1['RSI阈值'] = df_pass1['修正RSI'].rolling(63).quantile(0.3).shift(1).ffill().fillna(30)
+
+    # --- EMA Trend (depends on EMAs, not dynamic window) ---
+    df_pass1['EMA梯度'] = df_pass1['EMA21'] - df_pass1['EMA50']
+    df_pass1['EMA趋势'] = np.where(
+        (df_pass1['EMA9'] > df_pass1['EMA21']) & (df_pass1['EMA梯度'] > 0), 1,
+        np.where((df_pass1['EMA9'] < df_pass1['EMA21']) & (df_pass1['EMA梯度'] < 0), -1, 0)
+    )
+
+    # Calculate Low Volatility threshold based on fixed momentum
+    df_pass1['低波动阈值'] = df_pass1['动量因子_fixed'].rolling(45).quantile(0.35).ffill().fillna(0.01)
+
+    # --- Data Cleaning --- Fill NaNs strategically
+    # Fill forward first to propagate last valid values
+    df_pass1 = df_pass1.ffill()
+    # Then fill backward for any remaining NaNs at the beginning
+    df_pass1 = df_pass1.bfill()
+    # Final fillna for specific columns where a default makes sense
+    df_pass1 = df_pass1.fillna({
+        '修正RSI': 50, 
+        '动量因子_fixed': 0, 
+        'ATR': 0,
+        '工业指标_initial': 1.0,
+        '波动上轨_fixed': df_pass1['Price'], # Default to price if ATR is 0
+        '波动下轨_fixed': df_pass1['Price'], # Default to price if ATR is 0
+        '布林上轨': df_pass1['Price'],
+        '布林下轨': df_pass1['Price']
+        # Add other necessary columns if needed
+    })
+
+    return df_pass1
 
 
 def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加默认参数
@@ -303,144 +664,161 @@ def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加
     return df
 
 
-def generate_signals(df, rsi_threshold=33): # 添加默认参数
-    """整合所有条件到核心条件"""
-    df = df.assign(采购信号=False) if '采购信号' not in df.columns else df
+def generate_signals(df_pass1, rsi_threshold=33): # Pass 1: Generate preliminary signals
+    """根据 Pass 1 的初步指标生成初步信号."""
+    df_processed = df_pass1.copy()
+    df_processed['preliminary_signal'] = False
 
-    # --- 在进行比较前处理可能的 NaN ---
-    # (calculate_strategy 中已添加填充逻辑，这里作为双重保障)
-    # --- 修改: 使用赋值代替 inplace=True ---
-    df = df.fillna({
-        '工业指标': 1.0, '基线阈值': 1.0, '修正RSI': 50, 'Price': df['Price'].median(),
-        'EMA21': df['Price'].median(), '布林下轨': df['Price'].median() * 0.9,
-        'ema_ratio': 1.0, 'dynamic_ema_threshold': 1.0, '动量因子': 0.01, '低波动阈值': 0.01
-    })
+    # --- 在进行比较前处理可能的 NaN (基于 Pass 1 列) ---
+    # (calculate_strategy_pass1 中已添加填充逻辑，这里作为双重保障)
+    # --- 修改: 使用赋值代替 inplace=True --- Use specific columns from Pass 1
+    fill_values = {
+        '工业指标_initial': 1.0, '基线阈值_initial': 1.0, '修正RSI': 50, 'Price': df_processed['Price'].median(),
+        'EMA21': df_processed['Price'].median(), '布林下轨': df_processed['Price'].median() * 0.9,
+        'ema_ratio': 1.0, 'dynamic_ema_threshold': 1.0, '动量因子_fixed': 0.01, '低波动阈值': 0.01
+    }
+    # Only fill columns that exist
+    cols_to_fill = {k: v for k, v in fill_values.items() if k in df_processed.columns}
+    df_processed = df_processed.fillna(cols_to_fill)
     # --- 结束修改 ---
     # --- 结束 NaN 处理 ---
 
-    # 合并后的核心条件(原基础+增强)
+    # --- Prepare columns for peak_filter ---
+    # Rename Pass 1 fixed volatility bands to the generic names
+    df_processed['filter_atr_upper'] = df_processed['波动上轨_fixed'] # Use fixed version
+    df_processed['filter_atr_lower'] = df_processed['波动下轨_fixed'] # Use fixed version
+    # --- End preparation ---
+
+    # Preliminary core conditions using Pass 1 metrics
     try:
         core_conditions = [
-            df['工业指标'] < df['基线阈值'],
-            df['修正RSI'] < rsi_threshold, # <--- 使用参数
-            df['Price'] < df['EMA21'],
-            df['Price'] < df['布林下轨'] * 1.05,
-            df['ema_ratio'] > df['dynamic_ema_threshold'],
-            df['动量因子'] < df['低波动阈值']
+            df_processed['工业指标_initial'] < df_processed['基线阈值_initial'],
+            df_processed['修正RSI'] < rsi_threshold,
+            df_processed['Price'] < df_processed['EMA21'],
+            df_processed['Price'] < df_processed['布林下轨'] * 1.05, # Uses fixed momentum band
+            df_processed['ema_ratio'] > df_processed['dynamic_ema_threshold'], # Uses fixed momentum
+            df_processed['动量因子_fixed'] < df_processed['低波动阈值'] # Use fixed momentum
         ]
 
         # 确保所有条件都是布尔系列
-        # --- 添加缩进 ---
+        # --- 添加缩进 --- Check boolean type
         for i, cond in enumerate(core_conditions):
             if not pd.api.types.is_bool_dtype(cond):
-                 # 尝试转换，如果失败则设为 False
+                 # 尝试转换，如果失败则设为 False Convert to numeric, fill NaN, convert to bool
                  core_conditions[i] = pd.to_numeric(cond, errors='coerce').fillna(0).astype(bool)
 
-        # --- 添加缩进 ---
-        df['base_pass'] = np.sum(core_conditions, axis=0) >= 4
+        # --- 添加缩进 --- Calculate base pass
+        base_pass = np.sum(core_conditions, axis=0) >= 4 # Default requirement
         # 确保 peak_filter 返回布尔系列
-        peak_filter_result = peak_filter(df)
+        # --- 注意: peak_filter 可能需要调整以使用 Pass 1 的列 (如波动上下轨_fixed) ---
+        # 暂时保持原样，后续需要检查 peak_filter
+        peak_filter_result = peak_filter(df_processed)
         if not pd.api.types.is_bool_dtype(peak_filter_result):
-             peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool) # 假设过滤失败=True
+             peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
 
-        # --- 添加缩进 ---
-        new_signals = df['base_pass'] & peak_filter_result
+        # --- 添加缩进 --- Generate preliminary signal
+        df_processed['preliminary_signal'] = base_pass & peak_filter_result
 
     except Exception as e:
-        # --- 添加缩进 ---
-        print(f"生成信号时出错: {e}")
-        # 在出错时，默认不产生任何新信号
-        new_signals = pd.Series([False] * len(df))
-        df['base_pass'] = pd.Series([False] * len(df))
-        core_conditions = [pd.Series([False] * len(df))] * 6 # 初始化为全 False
+        # --- 添加缩进 --- Print error
+        print(f"生成初步信号时出错: {e}")
+        traceback.print_exc() # Print full traceback
+        # 在出错时，默认不产生任何初步信号
+        df_processed['preliminary_signal'] = pd.Series([False] * len(df_processed))
+        base_pass = pd.Series([False] * len(df_processed))
+        core_conditions = [pd.Series([False] * len(df_processed))] * 6 # 初始化为全 False
 
+    # --- Clean up temporary peak_filter columns ---
+    df_processed = df_processed.drop(columns=['filter_atr_upper', 'filter_atr_lower'], errors='ignore')
+    # --- End cleanup ---
 
-    # 记录所有条件状态 (确保条件是 Series)
-    for i in range(6):
-        col_name = f'core_cond{i+1}_met'
-        if i < len(core_conditions) and isinstance(core_conditions[i], pd.Series):
-            df[col_name] = core_conditions[i]
-        else:
-            df[col_name] = False # 如果条件生成失败，默认为 False
-
-    return process_signals(df.assign(采购信号=new_signals))
+    # 只返回包含初步信号的 DataFrame (以及 Pass 1 的所有计算结果)
+    return df_processed
 
 
 def peak_filter(df):
     """过滤价格形态 (添加空值处理)"""
+    # Price shape filter (remains the same)
     price_diff = df['Price'].diff(3)
-    # 使用 fillna 避免 NaN 参与比较导致错误
     price_diff_shifted_filled = price_diff.shift(1).fillna(0)
-    # 确保均值计算在非空 Series 上进行
-    price_diff_mean_filled = price_diff.dropna().mean() if not price_diff.dropna().empty else 0
+    # --- 使用滚动均值可能更合理，但暂时保持全局均值 --- 
+    price_diff_mean = df['Price'].diff(3).mean() 
+    #price_diff_mean_filled = price_diff.dropna().mean() if not price_diff.dropna().empty else 0 # 旧方式
+    price_diff_mean_filled = price_diff_mean if pd.notna(price_diff_mean) else 0 # 使用计算出的均值
     price_diff_filled = price_diff.fillna(0)
-
     peak_condition = (price_diff_shifted_filled > price_diff_mean_filled) & (price_diff_filled < 0)
 
-    # 计算 ATR 比率前检查分母是否为零或 NaN
-    atr_denominator = (df['波动上轨'] - df['波动下轨']).replace(0, np.nan)
-    atr_ratio = (df['Price'] - df['波动下轨']) / atr_denominator
-    atr_ratio_filled = atr_ratio.fillna(0.5) # 用中性值填充无法计算的比率
+    # ATR ratio filter (use generic column names)
+    # Ensure the generic columns exist before using them
+    if 'filter_atr_upper' not in df.columns or 'filter_atr_lower' not in df.columns:
+        print("警告: peak_filter 缺少 'filter_atr_upper' 或 'filter_atr_lower' 列，跳过 ATR 过滤。")
+        overbought_atr = pd.Series([False] * len(df)) # Default to not overbought if columns missing
+    else:
+        # --- 修正：使用 filter_atr_upper 和 filter_atr_lower --- 
+        atr_denominator = (df['filter_atr_upper'] - df['filter_atr_lower']).replace(0, np.nan)
+        # --- 结束修正 ---
+        # Ensure price and lower bound are numeric before subtraction
+        price_numeric = pd.to_numeric(df['Price'], errors='coerce')
+        lower_bound_numeric = pd.to_numeric(df['filter_atr_lower'], errors='coerce')
+        # Calculate numerator only where both are valid numbers
+        numerator = price_numeric - lower_bound_numeric
 
-    overbought_atr = atr_ratio_filled > 0.8
+        atr_ratio = numerator / atr_denominator
+        atr_ratio_filled = atr_ratio.fillna(0.5) # Use neutral value for NaNs
+        overbought_atr = atr_ratio_filled > 0.8
 
-    # 确保返回布尔类型 Series
+    # Ensure result is boolean Series
     return ~(peak_condition | overbought_atr).astype(bool)
 
-def process_signals(df):
+def process_signals(df_final_unprocessed): # Input is df with final unprocessed signals
+    """应用采购间隔限制到最终信号."""
 
-    processed_df = df.copy()
+    processed_df = df_final_unprocessed.copy()
 
-    # 确保信号列是布尔类型
+    # Ensure signal column exists and is boolean
     if '采购信号' not in processed_df.columns:
-        processed_df['采购信号'] = False
+        processed_df['采购信号'] = False # Should exist, but safeguard
     processed_df['采购信号'] = processed_df['采购信号'].astype(bool)
 
-    # --- 修改：使用整数移位和填充来计算 shifted ---
-    # 1. 将布尔信号转换为整数 (True=1, False=0)
+    # --- Apply MIN_PURCHASE_INTERVAL filter ---
+    # Check if signal was True in the previous (interval - 1) days
     signal_int_for_shift = processed_df['采购信号'].astype(int)
-    # 2. 移位整数序列，用 0 填充产生的 NaN
-    signal_shifted_int = signal_int_for_shift.shift(1).fillna(0)
-    # 3. 将移位并填充后的整数序列转换回布尔型
-    signal_shifted = signal_shifted_int.astype(bool)
-    # --- 结束修改 ---
+    # Shift to check previous days. shift(1) checks yesterday.
+    # Rolling max over the interval checks the window.
+    # Example: interval=2 -> check rolling(1).max() on shift(1) -> checks yesterday's signal
+    # Example: interval=3 -> check rolling(2).max() on shift(1) -> checks yesterday and day before
+    if MIN_PURCHASE_INTERVAL > 1:
+        signal_shifted_int = signal_int_for_shift.shift(1).fillna(0)
+        # Rolling window size is interval - 1 because shift(1) already moved one day back
+        shifted = signal_shifted_int.rolling(
+            window=MIN_PURCHASE_INTERVAL - 1, min_periods=1
+        ).max().astype(bool)
+        processed_df['采购信号'] = processed_df['采购信号'] & ~shifted
+    elif MIN_PURCHASE_INTERVAL == 1:
+         # Original logic prevented back-to-back signals even for interval=1.
+         # If interval=1 means allow back-to-back, this entire block can be skipped.
+         # Let's assume interval=1 still means no back-to-back for now.
+         signal_shifted_int = signal_int_for_shift.shift(1).fillna(0)
+         signal_shifted = signal_shifted_int.astype(bool)
+         processed_df['采购信号'] = processed_df['采购信号'] & ~signal_shifted
 
-    # 使用转换后的布尔序列进行滚动最大值计算
-    shifted = signal_shifted.rolling(
-        MIN_PURCHASE_INTERVAL, min_periods=1
-    ).max().astype(bool) # Ensure the result is boolean
+    # --- REMOVE signal streak limit (optional, was complex/possibly redundant) ---
+    # signal_int = processed_df['采购信号'].astype(int)
+    # group_keys = (~processed_df['采购信号']).cumsum()
+    # signal_streak = signal_int.groupby(group_keys).transform('cumsum')
+    # processed_df['采购信号'] = processed_df['采购信号'] & (signal_streak <= MIN_PURCHASE_INTERVAL)
+    # --- END REMOVAL ---
 
-    processed_df['采购信号'] = processed_df['采购信号'] & ~shifted
+    # --- REMOVE explicit window reset logic ---
+    # processed_df.loc[processed_df['采购信号'], 'adjustment_cycles'] = 0
+    # processed_df['动态短窗口'] = np.where(...)
+    # processed_df['动态长窗口'] = np.where(...)
+    # --- END REMOVAL ---
 
-    # 限制最大连续信号
-    signal_int = processed_df['采购信号'].astype(int) # 重新计算 signal_int
-    # groupby 的 key 需要能 hash，使用 cumsum 的结果是 OK 的
-    group_keys = (~processed_df['采购信号']).cumsum()
-    signal_streak = signal_int.groupby(group_keys).transform('cumsum') # Use cumsum for streak count
-
-    processed_df['采购信号'] = processed_df['采购信号'] & (signal_streak <= MIN_PURCHASE_INTERVAL)
-
-    processed_df.loc[processed_df['采购信号'], 'adjustment_cycles'] = 0
-    # 在process_signals中添加
-    processed_df['动态短窗口'] = np.where(
-        processed_df['采购信号'],
-        BASE_WINDOW_SHORT,
-        processed_df['动态短窗口']
-    )
-
-    # --- 新增：在采购信号为 True 时，也将动态长窗口重置为基准值 ---
-    processed_df['动态长窗口'] = np.where(
-        processed_df['采购信号'],
-        BASE_WINDOW_LONG, # 使用全局常量
-        processed_df['动态长窗口']
-    )
-    # --- 结束新增 ---
-
-    # 放宽连续信号限制 (使用 transform('sum') 可能更符合原意，如果 streak 是指组内总数)
-    # 如果 streak 是指连续计数，用 transform('cumsum')
-    # 假设原意是组内总数限制
-    signal_streak_total = signal_int.groupby(group_keys).transform('sum')
-    processed_df['采购信号'] = processed_df['采购信号'] & (signal_streak_total <= MIN_PURCHASE_INTERVAL * 1.5)
+    # --- REMOVE relaxed streak limit (optional) ---
+    # signal_streak_total = signal_int.groupby(group_keys).transform('sum')
+    # processed_df['采购信号'] = processed_df['采购信号'] & (signal_streak_total <= MIN_PURCHASE_INTERVAL * 1.5)
+    # --- END REMOVAL ---
 
 
     return processed_df
@@ -1355,45 +1733,83 @@ def objective(trial, df_original):
 # --- 主程序：生成 HTML 报告 ---
 if __name__ == "__main__":
     print("开始执行银价分析...")
+    print(f"试图访问 calculate_final_metrics: {calculate_final_metrics}") # <--- 新增的测试行
 
     # 1. 加载数据
     print("正在加载数据...")
-    df_main = load_silver_data() # 使用新变量名以示区分
+    df_main = load_silver_data()
 
-    # --- 获取优化后的参数 (注释掉 Optuna 获取逻辑, 使用指定值) ---
-    # ... (注释掉的 if/else 块保持不变) ...
-    # --- 修改：直接设置指定的固定参数 --- 
+    # --- 获取优化参数 (保持不变) ---
     optimized_quantile = 0.3631
     optimized_rsi_threshold = 33
-    print("\n将使用固定的指定参数生成最终报告：") # 更新提示
+    print("\n将使用固定的指定参数生成最终报告：")
     print(f"  baseline_quantile: {optimized_quantile:.4f}")
     print(f"  rsi_threshold: {optimized_rsi_threshold}")
     # --- 结束获取参数 ---
 
-    # --- 使用最终确定的参数生成报告和图表 ---
-    print("\n使用最终确定的参数生成报告和回测...")
-    df_report = df_main.copy()
-    df_report['采购信号'] = False
+    # --- 执行新的两阶段计算流程 ---
+    print("\n--- Pass 1: 计算初步指标和信号 ---")
+    # Pass 1: 计算初步指标 (使用固定窗口)
+    df_pass1_output = calculate_strategy_pass1(df_main.copy(), baseline_quantile=optimized_quantile)
+    # Pass 1: 生成初步信号
+    df_with_prelim_signal = generate_signals(df_pass1_output, rsi_threshold=optimized_rsi_threshold)
 
-    # 2. 计算策略与信号 (单轮计算)
-    print("正在计算策略与信号 (最终参数)...")
-    # 明确传入参数
-    df_report = calculate_strategy(df_report, baseline_quantile=optimized_quantile)
-    df_report = generate_signals(df_report, rsi_threshold=optimized_rsi_threshold)
-    # --- 新增：调用 process_signals --- 
-    print("正在处理和过滤信号...")
-    df_report = process_signals(df_report) 
-    # --- 结束新增 ---
+    print("\n--- Pass 2: 计算最终指标和信号 ---")
+    # Pass 2: 基于初步信号计算最终指标 (使用正确动态窗口)
+    df_final_metrics = calculate_final_metrics(df_with_prelim_signal, baseline_quantile=optimized_quantile)
+    # Pass 2: 生成最终信号 (未处理)
+    df_final_unprocessed = generate_final_signals(df_final_metrics, rsi_threshold=optimized_rsi_threshold)
 
+    print("\n--- 应用信号处理规则 (采购间隔) ---")
+    # 应用信号处理 (采购间隔过滤)
+    df_report = process_signals(df_final_unprocessed) # Final DataFrame for report/viz
+    # --- 结束新的计算流程 ---
+
+
+    # --- 后续步骤保持不变，使用 df_report ---
     # 3. 生成主报告数据
     print("正在生成主报告数据...")
+    # 确保 generate_report 使用的是最终的 df_report
+    # 注意: generate_report 内部的阈值比较文本可能需要更新，因为它使用了 '基线阈值'
+    # 我们需要确保 df_report 包含所有 generate_report 需要的最终列名
     report_data = generate_report(df_report.copy(), optimized_quantile, optimized_rsi_threshold)
-    report_html_content = report_data['report_content']
-    analysis_data = report_data['analysis_data']
+    if isinstance(report_data, dict): # Check if report generation was successful
+        report_html_content = report_data.get('report_content', "<p>报告生成失败</p>")
+        analysis_data = report_data.get('analysis_data') # May be None
+        if not analysis_data:
+             print("警告：未能从 generate_report 获取 analysis_data。今日解读可能不完整。")
+             # Provide default structure for analysis_data if missing to avoid errors later
+             analysis_data = {
+                 'current_date': pd.Timestamp.now(), 'signal': False, 'signal_strength': '',
+                 'condition_scores': 0, 'current_conditions_met': {}, 'indicator': 0,
+                 'threshold': 0, 'indicator_threshold_diff': 0, 'indicator_diff_desc': 'N/A',
+                 'rsi': 50, 'rsi_oversold_diff': 0, 'rsi_diff_desc': 'N/A', 'price': 0,
+                 'ema21': 0, 'lower_band_ref': 0, 'ema_ratio': 1, 'dynamic_ema_threshold': 1,
+                 'volatility': 0, 'vol_threshold': 0, 'peak_status_display': 'N/A',
+                 'interval_days': 999, 'interval_check_text': 'N/A', 'min_purchase_interval': MIN_PURCHASE_INTERVAL,
+                 'base_req_met': False, 'block_reasons': ['报告数据生成失败']
+             }
+
+    else: # Handle case where generate_report returned only HTML string or error string
+        report_html_content = str(report_data) if report_data else "<p>报告生成失败</p>"
+        analysis_data = None # Indicate analysis data is unavailable
+        print("警告：generate_report 未返回预期的字典。今日解读将不可用。")
+        # Provide default structure for analysis_data
+        analysis_data = {
+            'current_date': pd.Timestamp.now(), 'signal': False, 'signal_strength': '',
+            'condition_scores': 0, 'current_conditions_met': {}, 'indicator': 0,
+            'threshold': 0, 'indicator_threshold_diff': 0, 'indicator_diff_desc': 'N/A',
+            'rsi': 50, 'rsi_oversold_diff': 0, 'rsi_diff_desc': 'N/A', 'price': 0,
+            'ema21': 0, 'lower_band_ref': 0, 'ema_ratio': 1, 'dynamic_ema_threshold': 1,
+            'volatility': 0, 'vol_threshold': 0, 'peak_status_display': 'N/A',
+            'interval_days': 999, 'interval_check_text': 'N/A', 'min_purchase_interval': MIN_PURCHASE_INTERVAL,
+            'base_req_met': False, 'block_reasons': ['报告数据生成失败']
+        }
+
 
     # 4. 生成主图表 Figure 对象
     print("正在生成主图表...")
-    # 确保 create_visualization 使用的是正确计算后的 df_report
+    # 确保 create_visualization 使用的是最终的 df_report
     fig = create_visualization(df_report.copy(), optimized_rsi_threshold) # 传递副本
 
     # 5. 将主图表转换为 HTML div
@@ -1404,71 +1820,90 @@ if __name__ == "__main__":
              chart_html_div = "<p style='color:orange;'>主图表生成似乎为空。</p>"
     except Exception as e:
         print(f"错误：将主 Plotly 图表转换为 HTML 时失败: {e}")
+        traceback.print_exc() # Print detailed error
         chart_html_div = "<p style='color:red;'>主图表生成失败。</p>"
 
     # 6. 构建完整的 HTML 页面 (主报告)
-    # --- 6.1 预先构建动态"今日解读"部分的 HTML ---
-    today_interpretation_html = f'''
-        <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data['current_date'].strftime('%Y-%m-%d')}) 的策略信号解读：</h3>
-        <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购 ({})</span>'.format(analysis_data['signal_strength']) if analysis_data['signal'] else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
-        <p><strong>分析概要：</strong></p>
-        <ul>
-            <li>核心条件满足数量：<strong>{analysis_data['condition_scores']} / 6</strong> (策略要求至少满足 4 项)。</li>
-            <li>信号阻断检查：{analysis_data['peak_status_display']} 且 {analysis_data['interval_check_text']}。</li>
-    '''
-
-    if analysis_data['signal']:
-        today_interpretation_html += f'''<li>关键指标状态：
-                <ul>
-                    <li>核心工业指标: {analysis_data['indicator_diff_desc']}。</li>
-                    <li>市场动量 (RSI): {analysis_data['rsi_diff_desc']}。</li>
-                    {'<li>其余 {} 项辅助条件也满足要求。</li>'.format(analysis_data['condition_scores'] - 2) if analysis_data['condition_scores'] > 2 else ''}
-                </ul>
-            </li>
-            <li><strong>结论：</strong><span style="color:green;">由于关键买入指标进入策略目标区域，满足了 {analysis_data['condition_scores']} 项核心条件，并且无明确的信号阻断因素，策略判定当前形成 <strong>{analysis_data['signal_strength']}</strong> 的采购信号。</span></li>
+    # --- 6.1 预先构建动态"今日解读"部分的 HTML --- Check if analysis_data exists
+    today_interpretation_html = '<p>今日解读数据不可用。</p>' # Default message
+    if analysis_data:
+        # (rest of the interpretation HTML build logic using analysis_data - assuming it's okay)
+        today_interpretation_html = f'''
+            <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data.get('current_date', pd.Timestamp.now()).strftime('%Y-%m-%d')}) 的策略信号解读：</h3>
+            <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购 ({})</span>'.format(analysis_data.get('signal_strength', '')) if analysis_data.get('signal', False) else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
+            <p><strong>分析概要：</strong></p>
+            <ul>
+                <li>核心条件满足数量：<strong>{analysis_data.get('condition_scores', 'N/A')} / 6</strong> (策略要求至少满足 4 项)。</li>
+                <li>信号阻断检查：{analysis_data.get('peak_status_display', 'N/A')} 且 {analysis_data.get('interval_check_text', 'N/A')}。</li>
         '''
-    else: # 如果是观望
-        unmet_conditions_list = ''
-        if not analysis_data['current_conditions_met']['cond1']:
-            unmet_conditions_list += f'<li>核心工业指标: {analysis_data["indicator_diff_desc"]}.</li>'
-        if not analysis_data['current_conditions_met']['cond2']:
-             unmet_conditions_list += f'<li>市场动量 (RSI): {analysis_data["rsi_diff_desc"]}.</li>'
-        if not analysis_data['current_conditions_met']['cond3']:
-            unmet_conditions_list += f'<li>价格({analysis_data["price"]:.2f}) 未低于 EMA21({analysis_data["ema21"]:.2f}).</li>'
-        if not analysis_data['current_conditions_met']['cond4']:
-            unmet_conditions_list += f'<li>价格({analysis_data["price"]:.2f}) 未低于布林下轨参考({analysis_data["lower_band_ref"]:.2f}).</li>'
-        if not analysis_data['current_conditions_met']['cond5']:
-            unmet_conditions_list += f'<li>EMA比率({analysis_data["ema_ratio"]:.3f}) 未达动态阈值({analysis_data["dynamic_ema_threshold"]:.3f}).</li>'
-        if not analysis_data['current_conditions_met']['cond6']:
-            unmet_conditions_list += f'<li>波动性({analysis_data["volatility"]:.3f}) 高于动态阈值({analysis_data["vol_threshold"]:.3f}).</li>'
+        if analysis_data.get('signal', False):
+             # ... (HTML for signal True) ...
+              today_interpretation_html += f'''<li>关键指标状态：
+                    <ul>
+                        <li>核心工业指标: {analysis_data.get('indicator_diff_desc', 'N/A')}。</li>
+                        <li>市场动量 (RSI): {analysis_data.get('rsi_diff_desc', 'N/A')}。</li>
+                        {'<li>其余 {} 项辅助条件也满足要求。</li>'.format(analysis_data.get('condition_scores', 0) - 2) if analysis_data.get('condition_scores', 0) > 2 else ''}
+                    </ul>
+                </li>
+                <li><strong>结论：</strong><span style="color:green;">由于关键买入指标进入策略目标区域，满足了 {analysis_data.get('condition_scores', 'N/A')} 项核心条件，并且无明确的信号阻断因素，策略判定当前形成 <strong>{analysis_data.get('signal_strength', '边缘')}</strong> 的采购信号。</span></li>
+            '''
+        else: # 如果是观望
+            unmet_conditions_list = ''
+            # Safely access conditions_met dictionary
+            conditions_met = analysis_data.get('current_conditions_met', {})
+            if not conditions_met.get('cond1', True): # Default to True if missing to avoid listing
+                unmet_conditions_list += f'<li>核心工业指标: {analysis_data.get("indicator_diff_desc", "N/A")}.</li>'
+            if not conditions_met.get('cond2', True):
+                 unmet_conditions_list += f'<li>市场动量 (RSI): {analysis_data.get("rsi_diff_desc", "N/A")}.</li>'
+            if not conditions_met.get('cond3', True):
+                unmet_conditions_list += f'<li>价格({analysis_data.get("price", 0):.2f}) 未低于 EMA21({analysis_data.get("ema21", 0):.2f}).</li>'
+            if not conditions_met.get('cond4', True):
+                unmet_conditions_list += f'<li>价格({analysis_data.get("price", 0):.2f}) 未低于布林下轨参考({analysis_data.get("lower_band_ref", 0):.2f}).</li>'
+            if not conditions_met.get('cond5', True):
+                unmet_conditions_list += f'<li>EMA比率({analysis_data.get("ema_ratio", 1):.3f}) 未达动态阈值({analysis_data.get("dynamic_ema_threshold", 1):.3f}).</li>'
+            if not conditions_met.get('cond6', True):
+                unmet_conditions_list += f'<li>波动性({analysis_data.get("volatility", 0):.3f}) 高于动态阈值({analysis_data.get("vol_threshold", 0):.3f}).</li>'
 
-        if not unmet_conditions_list:
-             unmet_conditions_list = "<li>所有核心条件均满足，观望是由于信号阻断规则。</li>"
 
-        today_interpretation_html += f'<li>当前未能满足买入要求的主要条件：<ul>{unmet_conditions_list}</ul></li>'
+            if not unmet_conditions_list and not analysis_data.get('base_req_met', False):
+                 unmet_conditions_list = f"<li>核心条件满足数量不足 ({analysis_data.get('condition_scores', 'N/A')}/6)。</li>"
+            elif not unmet_conditions_list:
+                 unmet_conditions_list = "<li>所有核心条件均满足，观望是由于信号阻断规则。</li>"
 
-        blocking_issues = analysis_data['block_reasons']
-        conclusion_text = ''
-        if blocking_issues:
-            conclusion_text = '信号因以下规则被阻断：' + '； '.join(blocking_issues) + '。'
-        elif not analysis_data['base_req_met']:
-             conclusion_text = f"由于仅满足 {analysis_data['condition_scores']}/6 项核心条件，未能达到策略要求的最低数量。"
-        else:
-            conclusion_text = f"虽满足 {analysis_data['condition_scores']}/6 项核心条件，但可能存在其他未明确的阻断因素。"
 
-        today_interpretation_html += f'<li><strong>结论：</strong><span style="color:red;">{conclusion_text} 因此，策略建议暂时持币观望。</span></li>'
+            today_interpretation_html += f'<li>当前未能满足买入要求的主要条件：<ul>{unmet_conditions_list}</ul></li>'
 
-    today_interpretation_html += '</ul>'
+
+            blocking_issues = analysis_data.get('block_reasons', [])
+            conclusion_text = ''
+            if blocking_issues:
+                conclusion_text = '信号因以下规则被阻断：' + '； '.join(blocking_issues) + '。'
+            elif not analysis_data.get('base_req_met', False):
+                 conclusion_text = f"由于仅满足 {analysis_data.get('condition_scores', 'N/A')}/6 项核心条件，未能达到策略要求的最低数量。"
+            # else: # Removed this case as it might be covered by blocking_issues or unmet_conditions
+            #     conclusion_text = f"虽满足 {analysis_data.get('condition_scores', 'N/A')}/6 项核心条件，但可能存在其他未明确的阻断因素。"
+
+
+            today_interpretation_html += f'<li><strong>结论：</strong><span style="color:red;">{conclusion_text} 因此，策略建议暂时持币观望。</span></li>'
+
+
+        today_interpretation_html += '</ul>'
+
+
+    else: # analysis_data was None or generate_report failed
+        today_interpretation_html = '<p style="color:red;">无法生成今日解读，因为报告数据未能成功获取。</p>'
+        # ... (HTML for interpretation unavailable) ...
     # --- 6.1 结束预构建 ---
 
-    # --- 6.2 构建最终 HTML，插入预构建的部分 ---
+
+    # --- 6.2 构建最终 HTML，插入预构建的部分 --- (Add safety checks)
     final_html = f"""
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>银价分析报告</title>
+    <title>银价分析报告 (已重构)</title>
     <style>
         body {{ font-family: sans-serif; margin: 20px; }}
         .container {{ max-width: 900px; margin: auto; }}
@@ -1483,71 +1918,80 @@ if __name__ == "__main__":
 </head>
 <body>
     <div class="container">
-        <h1>银价走势分析与定投参考报告</h1>
+        <h1>银价走势分析与定投参考报告 (计算逻辑已重构)</h1>
         <p>生成时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
 
         <div class="report-content">
             <h2>📈 关键指标与最新信号</h2>
-            {report_html_content}
+            {report_html_content if report_html_content else "<p style='color:red;'>报告内容生成失败。</p>"}
         </div>
 
         <div class="chart-container">
              <h2>📊 交互式图表分析</h2>
              <p>将鼠标悬停在图表线上可查看详细数据和计算说明。您可以缩放和平移图表进行探索。</p>
-            {chart_html_div}
+            {chart_html_div if chart_html_div else "<p style='color:red;'>图表生成失败。</p>"}
         </div>
 
         <div class="report-content" style="margin-top: 30px;">
             <h2>📖 图表与策略逻辑解读</h2>
 
             <h3>图表元素解析</h3>
-            <p>以下是对图表中主要线条和标记的解释：</p>
-            <ul>
-                 <li><strong>上图 (价格与信号):</strong>
-                    <ul>
-                        <li><u>价格线 (深蓝)</u>: 代表每日的白银收盘价。这是所有分析的基础。</li>
-                        <li><u>短期均线 (橙虚线)</u>: 计算指定周期内（例如{BASE_WINDOW_SHORT}天，根据策略动态调整）收盘价的算术平均值。它能平滑短期价格波动，帮助识别近期趋势方向。价格穿越均线常被视为趋势可能改变的信号。</li>
-                        <li><u>EMA线 (红/绿细线)</u>: 指数移动平均线。与普通均线类似，但对更近期的价格赋予更高权重。这意味着EMA对价格变化的反应比普通均线更快，常用于捕捉更短期的趋势变化。</li>
-                        <li><u>采购信号 (▲ 红三角)</u>: 当下方描述的所有策略买入条件均满足时，此标记出现。</li>
-                        <li><u>EMA交叉 (↑ 绿 / ↓ 红)</u>: 标记EMA9线与EMA21线发生视觉交叉的确切位置。↑代表金叉(EMA9上穿)，↓代表死叉(EMA9下穿)。</li>
-                    </ul>
-                </li>
-                <li><strong>中图 (策略核心指标):</strong>
-                    <ul>
-                        <li><u>核心工业指标 (蓝色实线)</u>: 这是本策略定制的一个综合指标。其计算综合考虑了当前价格与其短期、长期移动平均线的偏离程度，并结合了近期市场波动性（通过\"动量因子\"衡量）。其核心思想是：当价格相对其历史均值偏低，且市场波动性不高时，该指标值会较低，策略倾向于认为此时潜在的买入价值可能更高。</li>
-                        <li><u>阈值线 (红色虚线等)</u>: 这些是根据近期\"核心工业指标\"的历史分布动态计算出来的参考线（通常是某个分位数，如25%分位数）。它们代表了策略认为的\"相对便宜\"的区域边界。当蓝色指标线低于关键的红色阈值线时，满足了策略的一个主要入场条件。</li>
-                    </ul>
-                </li>
-                <li><strong>下图 (市场动量指标 - RSI):</strong>
-                    <ul>
-                        <li><u>修正RSI (紫色实线)</u>: 相对强弱指数（Relative Strength Index）。它通过比较一定时期内（通常是14天）价格上涨日和下跌日的平均涨跌幅度，来衡量市场买卖双方的力量对比，反映市场的景气程度。RSI的值域在0-100之间。通常认为，当RSI低于某个阈值（如此策略中的45）时，市场可能处于\"超卖\"状态，即下跌可能过度，短期内价格有反弹的可能性；反之，高于某个阈值（如70或80）则可能表示\"超买\"。策略利用RSI的超卖信号作为另一个关键的入场条件。</li>
-                    </ul>
-                </li>
-            </ul>
-            <h3>策略信号生成逻辑</h3>
-             <p>策略生成采购信号 (▲) 需同时满足两大类条件：</p>
-            <ol>
-                <li><strong>核心条件达标：</strong>综合考量核心工业指标、RSI、价格与均线/通道关系、市场波动性等多个维度，需达到预设的触发数量（当前为至少4项）。</li>
-                <li><strong>无信号阻断：</strong>排除近期不利价格形态、ATR超买以及过于频繁的信号（需满足最小间隔天数，当前为{analysis_data['min_purchase_interval']}天）。</li>
-            </ol>
+            { # Logic for description - needs to be checked if MIN_PURCHASE_INTERVAL is available
+              f"""
+              <p>以下是对图表中主要线条和标记的解释：</p>
+              <ul>
+                   <li><strong>上图 (价格与信号):</strong>
+                      <ul>
+                          <li><u>价格线 (深蓝)</u>: 代表每日的白银收盘价。这是所有分析的基础。</li>
+                          <li><u>短期均线 (橙虚线)</u>: 计算指定周期内（例如{BASE_WINDOW_SHORT}天，根据策略动态调整）收盘价的算术平均值。它能平滑短期价格波动，帮助识别近期趋势方向。价格穿越均线常被视为趋势可能改变的信号。</li>
+                          <li><u>EMA线 (红/绿细线)</u>: 指数移动平均线。与普通均线类似，但对更近期的价格赋予更高权重。这意味着EMA对价格变化的反应比普通均线更快，常用于捕捉更短期的趋势变化。</li>
+                          <li><u>采购信号 (▲ 红三角)</u>: 当下方描述的所有策略买入条件均满足时，此标记出现。</li>
+                          <li><u>EMA交叉 (↑ 绿 / ↓ 红)</u>: 标记EMA9线与EMA21线发生视觉交叉的确切位置。↑代表金叉(EMA9上穿)，↓代表死叉(EMA9下穿)。</li>
+                      </ul>
+                  </li>
+                  <li><strong>中图 (策略核心指标):</strong>
+                      <ul>
+                          <li><u>核心工业指标 (蓝色实线)</u>: 这是本策略定制的一个综合指标。其计算综合考虑了当前价格与其短期、长期移动平均线的偏离程度，并结合了近期市场波动性（通过\"动量因子\"衡量）。其核心思想是：当价格相对其历史均值偏低，且市场波动性不高时，该指标值会较低，策略倾向于认为此时潜在的买入价值可能更高。</li>
+                          <li><u>阈值线 (红色虚线等)</u>: 这些是根据近期\"核心工业指标\"的历史分布动态计算出来的参考线（通常是某个分位数，如25%分位数）。它们代表了策略认为的\"相对便宜\"的区域边界。当蓝色指标线低于关键的红色阈值线时，满足了策略的一个主要入场条件。</li>
+                          <li><u>指标&lt;长期阈值区域 (淡绿填充)</u>: 图示核心工业指标低于其长期阈值线的区域。</li>
+                      </ul>
+                  </li>
+                  <li><strong>下图 (市场动量指标 - RSI):</strong>
+                      <ul>
+                          <li><u>修正RSI (紫色实线)</u>: 相对强弱指数（Relative Strength Index）。它通过比较一定时期内（通常是14天）价格上涨日和下跌日的平均涨跌幅度，来衡量市场买卖双方的力量对比，反映市场的景气程度。RSI的值域在0-100之间。通常认为，当RSI低于某个阈值（如此策略中的{optimized_rsi_threshold}）时，市场可能处于\"超卖\"状态，即下跌可能过度，短期内价格有反弹的可能性；反之，高于某个阈值（如70或80）则可能表示\"超买\"。策略利用RSI的超卖信号作为另一个关键的入场条件。</li>
+                           <li><u>动态RSI阈值 (橙虚线)</u>: 基于近期RSI计算的动态阈值线。</li>
+                           <li><u>RSI超卖参考线 (红点线)</u>: 当前策略使用的固定RSI买入阈值 ({optimized_rsi_threshold})。</li>
+                      </ul>
+                  </li>
+              </ul>
+              <h3>策略信号生成逻辑 (已重构)</h3>
+               <p>策略生成采购信号 (▲) 需同时满足两大类条件：</p>
+              <ol>
+                  <li><strong>核心条件达标：</strong>综合考量核心工业指标、RSI、价格与均线/通道关系、市场波动性等多个维度，需达到预设的触发数量（当前为至少4项）。这些指标现在基于考虑了信号历史的动态窗口进行计算。</li>
+                  <li><strong>无信号阻断：</strong>排除近期不利价格形态、ATR超买以及过于频繁的信号（需满足最小间隔天数，当前为{MIN_PURCHASE_INTERVAL}天）。</li>
+              </ol>
+              """
+             }
 
-            {today_interpretation_html}
+            {today_interpretation_html if today_interpretation_html else "<p style='color:red;'>今日解读生成失败。</p>"}
         </div>
     </div>
 </body>
 </html>
 """
 
+
     # 7. 将完整的 HTML 写入文件 (主报告)
-    output_filename = "index.html"
+    output_filename = "index_refactored.html" # Use new name for safety
     try:
         with open(output_filename, 'w', encoding='utf-8') as f:
             f.write(final_html)
-        print(f"成功将主报告写入文件: {output_filename}")
+        print(f"成功将重构后的报告写入文件: {output_filename}")
     except Exception as e:
-        print(f"错误：写入主 HTML 文件失败: {e}")
+        print(f"错误：写入重构后的 HTML 文件失败: {e}")
+        traceback.print_exc()
 
-    # 8. 自动执行 Git 命令推送到 GitHub (带无限重试，无等待)
+    # 8. 自动执行 Git 命令推送到 GitHub (保持不变)
     print("尝试将更新推送到 GitHub...")
     try:
         # 检查是否有未提交的更改
@@ -1561,7 +2005,7 @@ if __name__ == "__main__":
             print("Git 添加成功。")
 
             # 2. 提交更改
-            commit_message = f"自动更新银价分析报告 - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            commit_message = f"自动更新银价分析报告 (已重构) - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             commit_result = subprocess.run(['git', 'commit', '-m', commit_message], capture_output=True, text=True, check=True, encoding='utf-8')
             print("Git 提交成功。")
 
@@ -1631,5 +2075,11 @@ if __name__ == "__main__":
         print(f"执行 Git 命令或处理过程中发生未知错误: {e}")
 
     print("\n分析完成。")
+
+
+# --- 定义：Pass 2 最终指标计算 ---
+
+
+
 
 
