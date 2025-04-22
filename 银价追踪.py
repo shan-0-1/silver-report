@@ -337,7 +337,7 @@ def generate_signals(df, rsi_threshold=33): # 添加默认参数
                  core_conditions[i] = pd.to_numeric(cond, errors='coerce').fillna(0).astype(bool)
 
         # --- 添加缩进 ---
-        df['base_pass'] = np.sum(core_conditions, axis=0) >= 5
+        df['base_pass'] = np.sum(core_conditions, axis=0) >= 4
         # 确保 peak_filter 返回布尔系列
         peak_filter_result = peak_filter(df)
         if not pd.api.types.is_bool_dtype(peak_filter_result):
