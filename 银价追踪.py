@@ -1069,10 +1069,14 @@ def create_visualization(df, optimized_rsi_threshold):
                   row=2, col=1)
     
     # 填充区域逻辑保持不变，但填充区域本身不加图例或给个泛指名字
-    y_upper = df['基线阈值']
+    # --- 修改：填充区域基于长期阈值 ---
+    # y_upper = df['基线阈值'] # 原来的中期阈值
+    y_upper = df['基线阈值_长'] # 改为长期阈值
     y_lower = df['工业指标']
     y_fill_lower = y_upper.copy()
-    fill_mask = y_lower < y_upper
+    # fill_mask = y_lower < y_upper # 原来的比较
+    fill_mask = y_lower < df['基线阈值_长'] # 改为与长期阈值比较
+    # --- 结束修改 ---
     y_fill_lower[fill_mask] = y_lower[fill_mask]
     # 上边界（透明）
     fig.add_trace(go.Scatter(x=df['日期'], y=y_upper, fill=None, mode='lines', line_color='rgba(0,0,0,0)', showlegend=False, hoverinfo='skip'), row=2, col=1)
@@ -1082,11 +1086,13 @@ def create_visualization(df, optimized_rsi_threshold):
                              mode='lines',
                              line=dict(width=0),
                              fillcolor='rgba(144, 238, 144, 0.3)',
-                             name='指标<阈值区域', # 简洁图例名
-                             # legendgroup='indicator', legendrank=12, 
-                             hovertemplate=hovertemplate_fill
+                             # --- 修改：更新图例名称 ---
+                             name='指标<长期阈值区域', # 简洁图例名
+                             # --- 结束修改 ---
+                             # legendgroup='indicator', legendrank=12,
+                             hovertemplate=hovertemplate_fill # 悬停文本可以保持不变，因为它显示的是指标值
                              ), row=2, col=1)
-    
+
     fig.add_hline(y=1.0, line_dash="dot", line_color="gray", annotation_text="指标参考基准=1", row=2, col=1)
 
 
