@@ -122,16 +122,16 @@ def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加
     df['动态长窗口'] = pd.to_numeric(df['动态长窗口'], errors='coerce').fillna(MIN_WINDOW_SHORT * 2).astype(int)
     # 动态长窗口也要确保最低值
     min_long_window = df['动态短窗口'] * 2 # 这是一个 Series
-    # --- 修正：使用 np.maximum 进行元素级比较 --- 
+    # --- 修正：使用 np.maximum 进行元素级比较 ---
     df['动态长窗口'] = np.maximum(df['动态长窗口'], min_long_window)
-    # --- 结束修正 --- 
+    # --- 结束修正 ---
 
-    df['SMA动态长'] = df['Price'].rolling(
-        # window 参数需要单个整数，取该列最大值作为近似
-        # 注意：这可能不是预期行为，如果希望逐行使用动态长窗口，需要类似上面的列表推导
-        window=int(df['动态长窗口'].max()), # 确保 window 是整数
-        min_periods=1
-    ).mean().values
+    # --- 修改：使用列表推导实现真正的动态长窗口均线 ---
+    df['SMA动态长'] = [
+        df['Price'].iloc[max(0, i - int(w) + 1):i + 1].mean() # 确保 w 是整数
+        for i, w in enumerate(df['动态长窗口'])
+    ]
+    # --- 结束修改 ---
 
     # 工业指标计算（矢量运算）
     df['动量因子'] = 0.0  # 初始化动量因子列
