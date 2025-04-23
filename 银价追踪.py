@@ -1144,7 +1144,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
     # +++ 新增：近期 (252天) 成本效益分析 +++
     N_DAYS_RECENT = 252
-    LOCAL_WINDOW_DAYS = 45 # 修改：定义局部比较窗口天数为 45 天
+    LOCAL_WINDOW_DAYS = 30 # 修改：定义局部比较窗口天数为 45 天
     recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析 (局部择时评估)：</h3>"
 
     if len(df) >= N_DAYS_RECENT:
