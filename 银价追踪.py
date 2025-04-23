@@ -1262,8 +1262,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     # --- 计算用于动态分析的数据 --- 
     condition_scores = sum([current.get(f'core_cond{i}_met', False) for i in range(1, 7)])
     base_req_met = condition_scores >= 4
-    peak_filter_series = peak_filter(df)
-    peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True
+    
     peak_status_text = '<span style="color:green;">未触发阻断</span>' if peak_filter_passed else '<span style="color:red;">触发阻断</span>'
     atr_denominator = atr_upper - atr_lower
     atr_value = ((price - atr_lower) / atr_denominator) * 100 if atr_denominator != 0 else 50.0
