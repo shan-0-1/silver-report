@@ -1144,7 +1144,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
     # +++ 新增：近期 (252天) 成本效益分析 +++
     N_DAYS_RECENT = 252
-    LOCAL_WINDOW_DAYS = 90 # 新增：定义局部比较窗口天数
+    LOCAL_WINDOW_DAYS = 45 # 修改：定义局部比较窗口天数为 45 天
     recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析 (局部择时评估)：</h3>"
 
     if len(df) >= N_DAYS_RECENT:
@@ -1236,9 +1236,9 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
             # 构建 HTML 表格展示结果 (修改标题和悬停提示)
             recent_cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
-            recent_cost_analysis_html += f"<thead><tr><th>触发条件</th><th>近期触发次数</th><th>近期平均采购成本 (CNY)</th><th>相对局部均价优势率 (±{LOCAL_WINDOW_DAYS}天窗口)</th></tr></thead><tbody>"
+            recent_cost_analysis_html += f"<thead><tr><th>触发条件</th><th>近期触发次数</th><th>近期平均采购成本 (CNY)</th><th>相对局部均价优势率 (±{LOCAL_WINDOW_DAYS}天窗口)</th></tr></thead><tbody>" # 使用变量
             for name, (cost, adv_rate, points) in results.items():
-                 # 更新优势率的悬停解释
+                 # 更新优势率的悬停解释 (使用变量)
                  adv_title = f"计算: 对每个触发点，计算其价格相对于前后{LOCAL_WINDOW_DAYS}天市场均价的优势百分比，然后取所有点的平均值。正值表示平均买入价低于局部市场均价。" if adv_rate != "N/A" and adv_rate != "无采购" and adv_rate != "无触发" else ""
                  recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
             recent_cost_analysis_html += "</tbody></table>"
