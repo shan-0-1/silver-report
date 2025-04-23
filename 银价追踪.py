@@ -224,8 +224,9 @@ def generate_final_signals(df_final_metrics, rsi_threshold=33):
     # --- Prepare columns for peak_filter using final metric names ---
     # peak_filter expects 'filter_atr_upper' and 'filter_atr_lower'
     # Use the FINAL volatility bands calculated in calculate_final_metrics
-    df_processed['filter_atr_upper'] = df_processed['波动上轨']
-    df_processed['filter_atr_lower'] = df_processed['波动下轨']
+    # -- REMOVED temporary column creation --
+    # df_processed['filter_atr_upper'] = df_processed['波动上轨']
+    # df_processed['filter_atr_lower'] = df_processed['波动下轨']
 
     # Final core conditions using FINAL metrics
     try:
@@ -251,14 +252,14 @@ def generate_final_signals(df_final_metrics, rsi_threshold=33):
         # --- 结束新增 ---
 
         base_pass = np.sum(core_conditions, axis=0) >= 4 # Default requirement
-        
+
         # Remove the DEBUG block here
         # print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_final_signals (Pass 2) ---")
         # ... (removed print loop) ...
         # print("--- END DEBUG ---\n")
-        
-        # Apply peak filter (using final ATR bands via filter_atr_upper/lower)
-        peak_filter_result = peak_filter(df_processed)
+
+        # Apply peak filter (using final ATR bands by passing column names)
+        peak_filter_result = peak_filter(df_processed, upper_col='波动上轨', lower_col='波动下轨')
         if not pd.api.types.is_bool_dtype(peak_filter_result):
              peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
 
@@ -273,8 +274,8 @@ def generate_final_signals(df_final_metrics, rsi_threshold=33):
         for i in range(1, 7):
             df_processed[f'core_cond{i}_met'] = False
 
-    # --- Clean up temporary peak_filter columns ---
-    df_processed = df_processed.drop(columns=['filter_atr_upper', 'filter_atr_lower'], errors='ignore')
+    # --- Clean up temporary peak_filter columns (no longer needed) ---
+    # df_processed = df_processed.drop(columns=['filter_atr_upper', 'filter_atr_lower'], errors='ignore')
 
     return df_processed
 # --- 结束定义 ---
@@ -697,6 +698,7 @@ def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加
     df = df.ffill() # 使用 .ffill() 代替 fillna(method='ffill')
     df = df.bfill() # 使用 .bfill() 代替 fillna(method='bfill')
     # 提供更具体的填充值
+    # --- 修改：使用赋值代替 inplace=True ---
     df = df.fillna({'修正RSI': 50, '动量因子': 0, 'ATR': 0, '波动上轨': df['Price'], '波动下轨': df['Price']})
 
     return df
@@ -713,7 +715,9 @@ def generate_signals(df_pass1, rsi_threshold=33): # Pass 1: Generate preliminary
     fill_values = {
         '工业指标_initial': 1.0, '基线阈值_initial': 1.0, '修正RSI': 50, 'Price': df_processed['Price'].median(),
         'EMA21': df_processed['Price'].median(), '布林下轨': df_processed['Price'].median() * 0.9,
-        'ema_ratio': 1.0, 'dynamic_ema_threshold': 1.0, '动量因子_fixed': 0.01, '低波动阈值': 0.01
+        'ema_ratio': 1.0, 'dynamic_ema_threshold': 1.0, '动量因子_fixed': 0.01, '低波动阈值': 0.01,
+        '波动上轨_fixed': df_processed['Price'].median() * 1.1, # Needed for peak filter
+        '波动下轨_fixed': df_processed['Price'].median() * 0.9  # Needed for peak filter
     }
     # Only fill columns that exist
     cols_to_fill = {k: v for k, v in fill_values.items() if k in df_processed.columns}
@@ -723,8 +727,9 @@ def generate_signals(df_pass1, rsi_threshold=33): # Pass 1: Generate preliminary
 
     # --- Prepare columns for peak_filter ---
     # Rename Pass 1 fixed volatility bands to the generic names
-    df_processed['filter_atr_upper'] = df_processed['波动上轨_fixed'] # Use fixed version
-    df_processed['filter_atr_lower'] = df_processed['波动下轨_fixed'] # Use fixed version
+    # -- REMOVED temporary column creation --
+    # df_processed['filter_atr_upper'] = df_processed['波动上轨_fixed'] # Use fixed version
+    # df_processed['filter_atr_lower'] = df_processed['波动下轨_fixed'] # Use fixed version
     # --- End preparation ---
 
     # Preliminary core conditions using Pass 1 metrics
@@ -753,7 +758,8 @@ def generate_signals(df_pass1, rsi_threshold=33): # Pass 1: Generate preliminary
         # ... (removed print loop) ...
         # print("--- END DEBUG ---\n")
 
-        peak_filter_result = peak_filter(df_processed)
+        # Pass fixed column names to peak_filter
+        peak_filter_result = peak_filter(df_processed, upper_col='波动上轨_fixed', lower_col='波动下轨_fixed')
         if not pd.api.types.is_bool_dtype(peak_filter_result):
              peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
 
@@ -769,15 +775,15 @@ def generate_signals(df_pass1, rsi_threshold=33): # Pass 1: Generate preliminary
         base_pass = pd.Series([False] * len(df_processed))
         core_conditions = [pd.Series([False] * len(df_processed))] * 6 # 初始化为全 False
 
-    # --- Clean up temporary peak_filter columns ---
-    df_processed = df_processed.drop(columns=['filter_atr_upper', 'filter_atr_lower'], errors='ignore')
+    # --- Clean up temporary peak_filter columns (no longer needed) ---
+    # df_processed = df_processed.drop(columns=['filter_atr_upper', 'filter_atr_lower'], errors='ignore')
     # --- End cleanup ---
 
     # 只返回包含初步信号的 DataFrame (以及 Pass 1 的所有计算结果)
     return df_processed
 
 
-def peak_filter(df):
+def peak_filter(df, upper_col='波动上轨', lower_col='波动下轨'): # <-- Added parameters with defaults
     """过滤价格形态 (添加空值处理)"""
     # Price shape filter (remains the same)
     price_diff = df['Price'].diff(3)
@@ -790,18 +796,26 @@ def peak_filter(df):
     # Remove the DEBUG print added in the previous step
     # print(f"\n--- DEBUG: Columns received inside peak_filter: {df.columns.tolist()} ---")
 
-    # ATR ratio filter (use generic column names)
-    if 'filter_atr_upper' not in df.columns or 'filter_atr_lower' not in df.columns:
-        print("警告: peak_filter 缺少 'filter_atr_upper' 或 'filter_atr_lower' 列，跳过 ATR 过滤。")
+    # ATR ratio filter (use generic column names via parameters)
+    if upper_col not in df.columns or lower_col not in df.columns:
+        print(f"警告: peak_filter 缺少 '{upper_col}' 或 '{lower_col}' 列，跳过 ATR 过滤。")
         overbought_atr = pd.Series([False] * len(df))
     else:
-        atr_denominator = (df['filter_atr_upper'] - df['filter_atr_lower']).replace(0, np.nan)
+        # Use parameters to access columns
+        atr_denominator = (df[upper_col] - df[lower_col]).replace(0, np.nan)
         price_numeric = pd.to_numeric(df['Price'], errors='coerce')
-        lower_bound_numeric = pd.to_numeric(df['filter_atr_lower'], errors='coerce')
+        lower_bound_numeric = pd.to_numeric(df[lower_col], errors='coerce')
         numerator = price_numeric - lower_bound_numeric
 
+        # --- 添加检查确保 numerator 和 atr_denominator 兼容 --- 
+        if not isinstance(numerator, pd.Series):
+            numerator = pd.Series(numerator, index=df.index)
+        if not isinstance(atr_denominator, pd.Series):
+            atr_denominator = pd.Series(atr_denominator, index=df.index)
+        # --- 结束检查 --- 
+        
         atr_ratio = numerator / atr_denominator
-        atr_ratio_filled = atr_ratio.fillna(0.5)
+        atr_ratio_filled = atr_ratio.fillna(0.5) # Fill NaN ratios with neutral 0.5
         overbought_atr = atr_ratio_filled > 0.8
 
     # Ensure result is boolean Series
@@ -1055,7 +1069,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         # ... (removed print loop) ...
         # print("--- END DEBUG ---\n")
 
-        peak_filter_series = peak_filter(df_report_copy)
+        peak_filter_series = peak_filter(df_report_copy, upper_col='波动上轨', lower_col='波动下轨')
         peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True
     else:
         print("警告：generate_report 中缺少波动上/下轨列，无法执行 peak_filter。")
@@ -1076,7 +1090,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     atr_value = ((price - atr_lower) / atr_denominator) * 100 if atr_denominator != 0 else 50.0
     atr_overbought = atr_value > 80
     # 简化 title 属性的引号
-    report_html += f"<li title='一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：形态 {peak_status_text} | ATR通道位置 {atr_value:.1f}%</li>"
+    report_html += f"<li title='一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：{peak_status_text} | ATR通道位置 {atr_value:.1f}%</li>"
 
     last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
     interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
@@ -1293,7 +1307,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
             signal_strength = "边缘信号 (勉强满足条件)"
     
     # ... (peak_status_display, interval_check_text, block_reasons, current_conditions_met 的计算保持不变) ...
-    peak_filter_series = peak_filter(df)
+    peak_filter_series = peak_filter(df, upper_col='波动上轨', lower_col='波动下轨')
     peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True
     atr_denominator = atr_upper - atr_lower
     atr_value = ((price - atr_lower) / atr_denominator) * 100 if atr_denominator != 0 else 50.0
