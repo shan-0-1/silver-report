@@ -787,9 +787,8 @@ def peak_filter(df):
     price_diff_filled = price_diff.fillna(0)
     peak_condition = (price_diff_shifted_filled > price_diff_mean_filled) & (price_diff_filled < 0)
 
-    # --- 新增：直接打印传入函数的 DataFrame 的列名 ---
-    print(f"\n--- DEBUG: Columns received inside peak_filter: {df.columns.tolist()} ---")
-    # --- 结束新增 ---
+    # Remove the DEBUG print added in the previous step
+    # print(f"\n--- DEBUG: Columns received inside peak_filter: {df.columns.tolist()} ---")
 
     # ATR ratio filter (use generic column names)
     if 'filter_atr_upper' not in df.columns or 'filter_atr_lower' not in df.columns:
