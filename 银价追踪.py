@@ -192,17 +192,10 @@ def calculate_final_metrics(df_pass1_output, baseline_quantile=0.3631):
     })
 
     print("Final metric calculation complete.")
-    print("\n--- DEBUG: Checking columns before returning from calculate_final_metrics ---")
-    cols_to_check_p2 = ['波动上轨', '波动下轨']
-    for col in cols_to_check_p2:
-        if col in df_final.columns:
-            print(f"Column '{col}' Info:")
-            print(df_final[col].info())
-            print(f"NaN count in '{col}': {df_final[col].isna().sum()}")
-        else:
-            print(f"Column '{col}' NOT FOUND in df_final.")
-    print("--- END DEBUG ---\n")
-    # The 'return df_final' line should be right after this block
+    # Remove the DEBUG block here
+    # print("\n--- DEBUG: Checking columns before returning from calculate_final_metrics ---")
+    # ... (removed print loop) ...
+    # print("--- END DEBUG ---\n")
 
     return df_final
 
@@ -258,17 +251,12 @@ def generate_final_signals(df_final_metrics, rsi_threshold=33):
         # --- 结束新增 ---
 
         base_pass = np.sum(core_conditions, axis=0) >= 4 # Default requirement
-        print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_final_signals (Pass 2) ---")
-        cols_to_check_gf2 = ['filter_atr_upper', 'filter_atr_lower']
-        for col in cols_to_check_gf2:
-            if col in df_processed.columns:
-                print(f"Column '{col}' Info (Pass 2):")
-                print(df_processed[col].info())
-                print(f"NaN count in '{col}' (Pass 2): {df_processed[col].isna().sum()}")
-            else:
-                print(f"Column '{col}' NOT FOUND in df_processed (Pass 2).")
-        print("--- END DEBUG ---\n")
-        # The 'peak_filter_result = peak_filter(df_processed)' line should be right after this block
+        
+        # Remove the DEBUG block here
+        # print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_final_signals (Pass 2) ---")
+        # ... (removed print loop) ...
+        # print("--- END DEBUG ---\n")
+        
         # Apply peak filter (using final ATR bands via filter_atr_upper/lower)
         peak_filter_result = peak_filter(df_processed)
         if not pd.api.types.is_bool_dtype(peak_filter_result):
@@ -483,17 +471,10 @@ def calculate_strategy_pass1(df, baseline_quantile=0.3631): # Rename for clarity
         # Add other necessary columns if needed
     })
 
-    print("\n--- DEBUG: Checking columns before returning from calculate_strategy_pass1 ---")
-    cols_to_check_p1 = ['波动上轨_fixed', '波动下轨_fixed']
-    for col in cols_to_check_p1:
-        if col in df_pass1.columns:
-            print(f"Column '{col}' Info:")
-            print(df_pass1[col].info())
-            print(f"NaN count in '{col}': {df_pass1[col].isna().sum()}")
-        else:
-            print(f"Column '{col}' NOT FOUND in df_pass1.")
-    print("--- END DEBUG ---\n")
-    # The 'return df_pass1' line should be right after this block
+    # Remove the DEBUG block here
+    # print("\n--- DEBUG: Checking columns before returning from calculate_strategy_pass1 ---")
+    # ... (removed print loop) ...
+    # print("--- END DEBUG ---\n")
 
     return df_pass1
 
@@ -767,19 +748,11 @@ def generate_signals(df_pass1, rsi_threshold=33): # Pass 1: Generate preliminary
         # --- 添加缩进 --- Calculate base pass
         base_pass = np.sum(core_conditions, axis=0) >= 4 # Default requirement
         # 确保 peak_filter 返回布尔系列
-        print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_signals (Pass 1) ---")
-        cols_to_check_gf1 = ['filter_atr_upper', 'filter_atr_lower']
-        for col in cols_to_check_gf1:
-            if col in df_processed.columns:
-                print(f"Column '{col}' Info (Pass 1):")
-                print(df_processed[col].info())
-                print(f"NaN count in '{col}' (Pass 1): {df_processed[col].isna().sum()}")
-            else:
-                print(f"Column '{col}' NOT FOUND in df_processed (Pass 1).")
-        print("--- END DEBUG ---\n")
-        # The 'peak_filter_result = peak_filter(df_processed)' line should be right after this block
-        # --- 注意: peak_filter 可能需要调整以使用 Pass 1 的列 (如波动上下轨_fixed) ---
-        # 暂时保持原样，后续需要检查 peak_filter
+        # Remove the DEBUG block here
+        # print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_signals (Pass 1) ---")
+        # ... (removed print loop) ...
+        # print("--- END DEBUG ---\n")
+
         peak_filter_result = peak_filter(df_processed)
         if not pd.api.types.is_bool_dtype(peak_filter_result):
              peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
@@ -809,16 +782,15 @@ def peak_filter(df):
     # Price shape filter (remains the same)
     price_diff = df['Price'].diff(3)
     price_diff_shifted_filled = price_diff.shift(1).fillna(0)
-    # --- 使用滚动均值可能更合理，但暂时保持全局均值 --- 
     price_diff_mean = df['Price'].diff(3).mean()
-    price_diff_mean_filled = price_diff_mean if pd.notna(price_diff_mean) else 0 # 使用计算出的均值
+    price_diff_mean_filled = price_diff_mean if pd.notna(price_diff_mean) else 0
     price_diff_filled = price_diff.fillna(0)
     peak_condition = (price_diff_shifted_filled > price_diff_mean_filled) & (price_diff_filled < 0)
 
     # ATR ratio filter (use generic column names)
     if 'filter_atr_upper' not in df.columns or 'filter_atr_lower' not in df.columns:
         print("警告: peak_filter 缺少 'filter_atr_upper' 或 'filter_atr_lower' 列，跳过 ATR 过滤。")
-        overbought_atr = pd.Series([False] * len(df)) # Default to not overbought if columns missing
+        overbought_atr = pd.Series([False] * len(df))
     else:
         atr_denominator = (df['filter_atr_upper'] - df['filter_atr_lower']).replace(0, np.nan)
         price_numeric = pd.to_numeric(df['Price'], errors='coerce')
@@ -826,10 +798,9 @@ def peak_filter(df):
         numerator = price_numeric - lower_bound_numeric
 
         atr_ratio = numerator / atr_denominator
-        atr_ratio_filled = atr_ratio.fillna(0.5) # Use neutral value for NaNs
-        # --- 移动到 else 块内部 --- 
+        atr_ratio_filled = atr_ratio.fillna(0.5)
+        # Correctly indent the following line:
         overbought_atr = atr_ratio_filled > 0.8
-        # --- 结束移动 ---
 
     # Ensure result is boolean Series
     return ~(peak_condition | overbought_atr).astype(bool)
@@ -1077,23 +1048,16 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         df_report_copy['filter_atr_upper'] = df_report_copy['波动上轨']
         df_report_copy['filter_atr_lower'] = df_report_copy['波动下轨']
 
-        print("\n--- DEBUG: Checking filter_atr_* columns in df_report_copy before calling peak_filter in generate_report ---")
-        cols_to_check_gr = ['filter_atr_upper', 'filter_atr_lower']
-        for col in cols_to_check_gr:
-            if col in df_report_copy.columns:
-                print(f"Column '{col}' Info (Report):")
-                print(df_report_copy[col].info())
-                print(f"NaN count in '{col}' (Report): {df_report_copy[col].isna().sum()}")
-            else:
-                print(f"Column '{col}' NOT FOUND in df_report_copy (Report).")
-        print("--- END DEBUG ---\n")
-        # 下一行应该是: peak_filter_series = peak_filter(df_report_copy)
+        # Remove the DEBUG block here
+        # print("\n--- DEBUG: Checking filter_atr_* columns in df_report_copy before calling peak_filter in generate_report ---")
+        # ... (removed print loop) ...
+        # print("--- END DEBUG ---\n")
 
         peak_filter_series = peak_filter(df_report_copy)
         peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True
     else:
         print("警告：generate_report 中缺少波动上/下轨列，无法执行 peak_filter。")
-        peak_filter_passed = True # Assume filter passes if bands are missing
+        peak_filter_passed = True
     # --- 结束准备 --- 
 
     #peak_filter_series = peak_filter(df) # Original call
