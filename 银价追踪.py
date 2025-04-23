@@ -258,7 +258,17 @@ def generate_final_signals(df_final_metrics, rsi_threshold=33):
         # --- 结束新增 ---
 
         base_pass = np.sum(core_conditions, axis=0) >= 4 # Default requirement
-
+        print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_final_signals (Pass 2) ---")
+        cols_to_check_gf2 = ['filter_atr_upper', 'filter_atr_lower']
+        for col in cols_to_check_gf2:
+            if col in df_processed.columns:
+                print(f"Column '{col}' Info (Pass 2):")
+                print(df_processed[col].info())
+                print(f"NaN count in '{col}' (Pass 2): {df_processed[col].isna().sum()}")
+            else:
+                print(f"Column '{col}' NOT FOUND in df_processed (Pass 2).")
+        print("--- END DEBUG ---\n")
+        # The 'peak_filter_result = peak_filter(df_processed)' line should be right after this block
         # Apply peak filter (using final ATR bands via filter_atr_upper/lower)
         peak_filter_result = peak_filter(df_processed)
         if not pd.api.types.is_bool_dtype(peak_filter_result):
@@ -757,6 +767,17 @@ def generate_signals(df_pass1, rsi_threshold=33): # Pass 1: Generate preliminary
         # --- 添加缩进 --- Calculate base pass
         base_pass = np.sum(core_conditions, axis=0) >= 4 # Default requirement
         # 确保 peak_filter 返回布尔系列
+        print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_signals (Pass 1) ---")
+        cols_to_check_gf1 = ['filter_atr_upper', 'filter_atr_lower']
+        for col in cols_to_check_gf1:
+            if col in df_processed.columns:
+                print(f"Column '{col}' Info (Pass 1):")
+                print(df_processed[col].info())
+                print(f"NaN count in '{col}' (Pass 1): {df_processed[col].isna().sum()}")
+            else:
+                print(f"Column '{col}' NOT FOUND in df_processed (Pass 1).")
+        print("--- END DEBUG ---\n")
+        # The 'peak_filter_result = peak_filter(df_processed)' line should be right after this block
         # --- 注意: peak_filter 可能需要调整以使用 Pass 1 的列 (如波动上下轨_fixed) ---
         # 暂时保持原样，后续需要检查 peak_filter
         peak_filter_result = peak_filter(df_processed)
