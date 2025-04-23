@@ -2018,7 +2018,7 @@ if __name__ == "__main__":
 
 
     # 7. 将完整的 HTML 写入文件 (主报告)
-    output_filename = "index_refactored.html" # Use new name for safety
+    output_filename = "index.html" # Use new name for safety
     try:
         with open(output_filename, 'w', encoding='utf-8') as f:
             f.write(final_html)
