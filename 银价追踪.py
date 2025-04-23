@@ -1939,7 +1939,7 @@ if __name__ == "__main__":
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>银价分析报告 (已重构)</title>
+    <title>银价分析报告 </title>
     <style>
         body {{ font-family: sans-serif; margin: 20px; }}
         .container {{ max-width: 900px; margin: auto; }}
@@ -1954,7 +1954,7 @@ if __name__ == "__main__":
 </head>
 <body>
     <div class="container">
-        <h1>银价走势分析与定投参考报告 (计算逻辑已重构)</h1>
+        <h1>银价走势分析与定投参考报告 </h1>
         <p>生成时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
 
         <div class="report-content">
@@ -2000,7 +2000,7 @@ if __name__ == "__main__":
                     </ul>
                 </li>
             </ul>
-              <h3>策略信号生成逻辑 (已重构)</h3>
+              <h3>策略信号生成逻辑 </h3>
              <p>策略生成采购信号 (▲) 需同时满足两大类条件：</p>
             <ol>
                   <li><strong>核心条件达标：</strong>综合考量核心工业指标、RSI、价格与均线/通道关系、市场波动性等多个维度，需达到预设的触发数量（当前为至少4项）。这些指标现在基于考虑了信号历史的动态窗口进行计算。</li>
@@ -2018,7 +2018,7 @@ if __name__ == "__main__":
 
 
     # 7. 将完整的 HTML 写入文件 (主报告)
-    output_filename = "index.html" # Use new name for safety
+    output_filename = "index.html" 
     try:
         with open(output_filename, 'w', encoding='utf-8') as f:
             f.write(final_html)
@@ -2041,7 +2041,7 @@ if __name__ == "__main__":
             print("Git 添加成功。")
 
             # 2. 提交更改
-            commit_message = f"自动更新银价分析报告 (已重构) - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            commit_message = f"自动更新银价分析报告  - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             commit_result = subprocess.run(['git', 'commit', '-m', commit_message], capture_output=True, text=True, check=True, encoding='utf-8')
             print("Git 提交成功。")
 
