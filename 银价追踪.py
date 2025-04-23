@@ -192,6 +192,18 @@ def calculate_final_metrics(df_pass1_output, baseline_quantile=0.3631):
     })
 
     print("Final metric calculation complete.")
+    print("\n--- DEBUG: Checking columns before returning from calculate_final_metrics ---")
+    cols_to_check_p2 = ['波动上轨', '波动下轨']
+    for col in cols_to_check_p2:
+        if col in df_final.columns:
+            print(f"Column '{col}' Info:")
+            print(df_final[col].info())
+            print(f"NaN count in '{col}': {df_final[col].isna().sum()}")
+        else:
+            print(f"Column '{col}' NOT FOUND in df_final.")
+    print("--- END DEBUG ---\n")
+    # The 'return df_final' line should be right after this block
+
     return df_final
 
 
@@ -460,6 +472,18 @@ def calculate_strategy_pass1(df, baseline_quantile=0.3631): # Rename for clarity
         '布林下轨': df_pass1['Price']
         # Add other necessary columns if needed
     })
+
+    print("\n--- DEBUG: Checking columns before returning from calculate_strategy_pass1 ---")
+    cols_to_check_p1 = ['波动上轨_fixed', '波动下轨_fixed']
+    for col in cols_to_check_p1:
+        if col in df_pass1.columns:
+            print(f"Column '{col}' Info:")
+            print(df_pass1[col].info())
+            print(f"NaN count in '{col}': {df_pass1[col].isna().sum()}")
+        else:
+            print(f"Column '{col}' NOT FOUND in df_pass1.")
+    print("--- END DEBUG ---\n")
+    # The 'return df_pass1' line should be right after this block
 
     return df_pass1
 
