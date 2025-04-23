@@ -1076,6 +1076,19 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     if '波动上轨' in df_report_copy.columns and '波动下轨' in df_report_copy.columns:
         df_report_copy['filter_atr_upper'] = df_report_copy['波动上轨']
         df_report_copy['filter_atr_lower'] = df_report_copy['波动下轨']
+
+        print("\n--- DEBUG: Checking filter_atr_* columns in df_report_copy before calling peak_filter in generate_report ---")
+        cols_to_check_gr = ['filter_atr_upper', 'filter_atr_lower']
+        for col in cols_to_check_gr:
+            if col in df_report_copy.columns:
+                print(f"Column '{col}' Info (Report):")
+                print(df_report_copy[col].info())
+                print(f"NaN count in '{col}' (Report): {df_report_copy[col].isna().sum()}")
+            else:
+                print(f"Column '{col}' NOT FOUND in df_report_copy (Report).")
+        print("--- END DEBUG ---\n")
+        # 下一行应该是: peak_filter_series = peak_filter(df_report_copy)
+
         peak_filter_series = peak_filter(df_report_copy)
         peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True
     else:
