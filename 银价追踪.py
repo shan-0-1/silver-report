@@ -1144,86 +1144,102 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
     # +++ 新增：近期 (252天) 成本效益分析 +++
     N_DAYS_RECENT = 252
-    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析：</h3>"
+    LOCAL_WINDOW_DAYS = 90 # 新增：定义局部比较窗口天数
+    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析 (局部择时评估)：</h3>"
 
     if len(df) >= N_DAYS_RECENT:
         df_recent = df.iloc[-N_DAYS_RECENT:].copy() # 获取最近 N 天数据副本
+        # 确保 df_recent 的索引是从 0 开始的相对索引，便于窗口计算
+        df_recent = df_recent.reset_index(drop=True)
 
         # 确保需要的列存在
         required_recent_cols = ['Price', '采购信号', '工业指标', '基线阈值_短', '基线阈值', '基线阈值_长']
         missing_recent_cols = [col for col in required_recent_cols if col not in df_recent.columns]
 
         if not missing_recent_cols:
-            # 计算近期市场平均价格
-            avg_market_price_recent = safe_float(df_recent['Price'].mean())
-
-            recent_cost_analysis_html += f"<p>同期市场平均价格: {avg_market_price_recent:.2f} CNY</p>"
-            recent_cost_analysis_html += "<ul style='list-style-type: none; padding-left: 0;'>"
-
             results = {} # 存储不同策略的计算结果
 
+            # --- 定义计算局部优势的辅助函数 ---
+            def calculate_local_advantage(trigger_indices, df_data, window_days):
+                local_advantages = []
+                total_cost = 0
+                purchase_count = 0
+
+                if not trigger_indices.empty:
+                    prices = df_data['Price'].values # 使用 numpy 提高效率
+                    purchase_count = len(trigger_indices)
+                    total_cost = prices[trigger_indices].sum()
+
+                    for i in trigger_indices:
+                        buy_price = prices[i]
+                        start_idx = max(0, i - window_days)
+                        end_idx = min(len(prices) - 1, i + window_days)
+
+                        if start_idx < end_idx: # 确保窗口内至少有2个点
+                            local_window_prices = prices[start_idx : end_idx + 1]
+                            local_market_avg = np.nanmean(local_window_prices) # 使用 nanmean 忽略可能的NaN
+
+                            if pd.notna(local_market_avg) and local_market_avg > 1e-6: # 避免除零或无效均价
+                                advantage = (local_market_avg - buy_price) / local_market_avg * 100
+                                local_advantages.append(advantage)
+                        # else: 窗口太小或数据不足，忽略此点的局部优势计算
+
+                avg_cost = total_cost / purchase_count if purchase_count > 0 else 0
+                avg_local_advantage = np.mean(local_advantages) if local_advantages else np.nan
+
+                return avg_cost, avg_local_advantage, purchase_count
+            # --- 结束辅助函数定义 ---
+
             # --- 1. 实际策略信号 ---
-            strategy_purchases_recent = df_recent[df_recent['采购信号']]
-            strategy_points = len(strategy_purchases_recent)
+            strategy_indices = df_recent.index[df_recent['采购信号']]
+            avg_strategy_cost, avg_strategy_adv, strategy_points = calculate_local_advantage(
+                strategy_indices, df_recent, LOCAL_WINDOW_DAYS
+            )
             if strategy_points > 0:
-                avg_strategy_cost_recent = safe_float(strategy_purchases_recent['Price'].mean())
-                if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_strategy_cost_recent) / avg_market_price_recent) * 100
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                results['实际策略信号'] = (f"{avg_strategy_cost_recent:.2f}", advantage_text, strategy_points)
+                adv_text = f"<span style='color: {'green' if avg_strategy_adv >= 0 else 'red'};'>{avg_strategy_adv:+.1f}%</span>" if pd.notna(avg_strategy_adv) else "N/A"
+                results['实际策略信号'] = (f"{avg_strategy_cost:.2f}", adv_text, strategy_points)
             else:
                 results['实际策略信号'] = ("N/A", "无采购", 0)
 
             # --- 2. 低于短期阈值 ---
-            short_thresh_buys = df_recent[df_recent['工业指标'] < df_recent['基线阈值_短']]
-            short_points = len(short_thresh_buys)
+            short_thresh_indices = df_recent.index[df_recent['工业指标'] < df_recent['基线阈值_短']]
+            avg_short_cost, avg_short_adv, short_points = calculate_local_advantage(
+                short_thresh_indices, df_recent, LOCAL_WINDOW_DAYS
+            )
             if short_points > 0:
-                avg_short_thresh_cost = safe_float(short_thresh_buys['Price'].mean())
-                if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_short_thresh_cost) / avg_market_price_recent) * 100
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                results['低于短期阈值'] = (f"{avg_short_thresh_cost:.2f}", advantage_text, short_points)
+                adv_text = f"<span style='color: {'green' if avg_short_adv >= 0 else 'red'};'>{avg_short_adv:+.1f}%</span>" if pd.notna(avg_short_adv) else "N/A"
+                results['低于短期阈值'] = (f"{avg_short_cost:.2f}", adv_text, short_points)
             else:
                  results['低于短期阈值'] = ("N/A", "无触发", 0)
 
             # --- 3. 低于中期阈值 ---
-            mid_thresh_buys = df_recent[df_recent['工业指标'] < df_recent['基线阈值']]
-            mid_points = len(mid_thresh_buys)
+            mid_thresh_indices = df_recent.index[df_recent['工业指标'] < df_recent['基线阈值']]
+            avg_mid_cost, avg_mid_adv, mid_points = calculate_local_advantage(
+                mid_thresh_indices, df_recent, LOCAL_WINDOW_DAYS
+            )
             if mid_points > 0:
-                avg_mid_thresh_cost = safe_float(mid_thresh_buys['Price'].mean())
-                if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_mid_thresh_cost) / avg_market_price_recent) * 100
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                results['低于中期阈值'] = (f"{avg_mid_thresh_cost:.2f}", advantage_text, mid_points)
+                adv_text = f"<span style='color: {'green' if avg_mid_adv >= 0 else 'red'};'>{avg_mid_adv:+.1f}%</span>" if pd.notna(avg_mid_adv) else "N/A"
+                results['低于中期阈值'] = (f"{avg_mid_cost:.2f}", adv_text, mid_points)
             else:
                 results['低于中期阈值'] = ("N/A", "无触发", 0)
 
             # --- 4. 低于长期阈值 ---
-            long_thresh_buys = df_recent[df_recent['工业指标'] < df_recent['基线阈值_长']]
-            long_points = len(long_thresh_buys)
+            long_thresh_indices = df_recent.index[df_recent['工业指标'] < df_recent['基线阈值_长']]
+            avg_long_cost, avg_long_adv, long_points = calculate_local_advantage(
+                long_thresh_indices, df_recent, LOCAL_WINDOW_DAYS
+            )
             if long_points > 0:
-                avg_long_thresh_cost = safe_float(long_thresh_buys['Price'].mean())
-                if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_long_thresh_cost) / avg_market_price_recent) * 100
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                results['低于长期阈值'] = (f"{avg_long_thresh_cost:.2f}", advantage_text, long_points)
+                adv_text = f"<span style='color: {'green' if avg_long_adv >= 0 else 'red'};'>{avg_long_adv:+.1f}%</span>" if pd.notna(avg_long_adv) else "N/A"
+                results['低于长期阈值'] = (f"{avg_long_cost:.2f}", adv_text, long_points)
             else:
                 results['低于长期阈值'] = ("N/A", "无触发", 0)
 
-            # 构建 HTML 表格展示结果
+            # 构建 HTML 表格展示结果 (修改标题和悬停提示)
             recent_cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
-            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th>近期平均采购成本 (CNY)</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            recent_cost_analysis_html += f"<thead><tr><th>触发条件</th><th>近期触发次数</th><th>近期平均采购成本 (CNY)</th><th>相对局部均价优势率 (±{LOCAL_WINDOW_DAYS}天窗口)</th></tr></thead><tbody>"
             for name, (cost, adv_rate, points) in results.items():
-                 # 为优势率添加悬停解释
-                 adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
+                 # 更新优势率的悬停解释
+                 adv_title = f"计算: 对每个触发点，计算其价格相对于前后{LOCAL_WINDOW_DAYS}天市场均价的优势百分比，然后取所有点的平均值。正值表示平均买入价低于局部市场均价。" if adv_rate != "N/A" and adv_rate != "无采购" and adv_rate != "无触发" else ""
                  recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
             recent_cost_analysis_html += "</tbody></table>"
 
@@ -1232,7 +1248,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     else:
         recent_cost_analysis_html += f"<p><em>数据不足 ({len(df)} 天)，无法进行 {N_DAYS_RECENT} 天成本效益分析。</em></p>"
 
-    recent_cost_analysis_html += "</ul>" # 结束无序列表（虽然现在是表格）
+    # recent_cost_analysis_html += "</ul>" # 不再需要这个 ul 标签
     # +++ 结束新增计算 +++
 
     report_html += recent_cost_analysis_html
