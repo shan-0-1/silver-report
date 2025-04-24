@@ -1399,22 +1399,9 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
             signal_strength = "明确信号 (多数条件满足)"
         else: # condition_scores == 4
             signal_strength = "边缘信号 (勉强满足条件)"
-    # --- End Restored calculations --- 
-
-    # --- Ensure interval calculation for analysis_data is Fully Removed --- 
-    # last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
-    # interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
-    # interval_ok = interval_days >= MIN_PURCHASE_INTERVAL # Ensure removed
-    # interval_check_text = ... # Ensure removed
-    # --- End Removed interval calculation --- 
 
     base_req_met = condition_scores >= 4 # 这个要在 block_reasons 之前计算
     block_reasons = []
-    # 注意：不再将"核心条件不足"加入 block_reasons，因为它会在结论中单独处理
-    # if not base_req_met: block_reasons.append(f"核心条件不足({condition_scores}/6)") 
-    # --- Ensure interval block reason is Fully Removed --- 
-    # if not interval_ok: block_reasons.append(f"采购间隔限制(还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)") 
-    # --- End Interval Block Reason Removal --- 
     if not peak_filter_passed: block_reasons.append("价格形态不利")
     if atr_overbought: block_reasons.append(f"ATR通道超买({atr_value:.1f}%)")
 
@@ -1442,7 +1429,6 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         'volatility': volatility,
         'vol_threshold': vol_threshold,
         'peak_status_display': peak_status_display,
-        # --- REMOVED interval fields from analysis_data --- 
         'base_req_met': base_req_met,
         'block_reasons': block_reasons, # 现在只包含明确的阻断原因
     }
@@ -1481,26 +1467,24 @@ def create_visualization(df, optimized_rsi_threshold):
     hovertemplate_rsi = "<b>修正RSI</b>: %{y:.1f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 基于14日平均涨跌幅，衡量超买超卖</i><extra></extra>"
     hovertemplate_rsi_threshold = "<b>动态RSI阈值</b>: %{y:.1f}<br>日期: %{x|%Y-%m-%d}<br><i>计算: 近63日RSI的30%分位数</i><extra></extra>"
     hovertemplate_fill = "<b>指标低于阈值区域</b><br>日期: %{x|%Y-%m-%d}<br>工业指标: %{y:.2f}<br><i>满足买入条件1</i><extra></extra>"
-    # EMA 交叉的悬停文本将在 annotations 中定义
 
     # --- 行 1: 价格与信号 --- 
-    # 移除 legendgroup 使其可单独隐藏
     fig.add_trace(go.Scatter(x=df['日期'], y=df['Price'], mode='lines', name='白银价格 (CNY)',
-                             line=dict(color='navy', width=1.5), # legendgroup='price', legendrank=1,
+                             line=dict(color='navy', width=1.5),
                              hovertemplate=hovertemplate_price),
                   row=1, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['SMA动态短'], mode='lines', name='短期均线 (近期趋势)',
-                             line=dict(color='darkorange', dash='dash'), # legendgroup='price', legendrank=2,
+                             line=dict(color='darkorange', dash='dash'),
                              customdata=df['动态短窗口'],
                              hovertemplate=hovertemplate_sma),
                   row=1, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['EMA9'], mode='lines', name='EMA9 (更短趋势)',
-                             line=dict(color='firebrick', width=1), # legendgroup='price', legendrank=3, 
+                             line=dict(color='firebrick', width=1),
                              opacity=0.7,
                              hovertemplate=hovertemplate_ema),
                   row=1, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['EMA21'], mode='lines', name='EMA21 (中期趋势)',
-                             line=dict(color='seagreen', width=1), # legendgroup='price', legendrank=4, 
+                             line=dict(color='seagreen', width=1),
                              opacity=0.7,
                              hovertemplate=hovertemplate_ema),
                   row=1, col=1)
@@ -1509,25 +1493,16 @@ def create_visualization(df, optimized_rsi_threshold):
     # 使用新的 'ema9_above_ema21' 列来检测视觉交叉
     if 'ema9_above_ema21' in df.columns and pd.api.types.is_bool_dtype(df['ema9_above_ema21']) and len(df) > 1:
         # 检测 ema9_above_ema21 状态的变化
-        # --- 修改：先转换为整数再求差分 ---
         cross_change = df['ema9_above_ema21'].astype(int).diff()
-        # --- 结束修改 ---
         # diff == 1 表示从 False 变为 True (视觉金叉)
         golden_cross_points = df[(cross_change == 1)]
         # diff == -1 表示从 True 变为 False (视觉死叉)
         death_cross_points = df[(cross_change == -1)]
 
-        # --- 移除调试打印 ---
-        # print(f"检测到的视觉金叉点数量: {len(golden_cross_points)}")
-        # print(f"检测到的视觉死叉点数量: {len(death_cross_points)}")
-        # --- 结束移除 ---
-
         # 计算一个小的偏移量，让箭头稍微离开价格线
         # 使用 Y 轴范围的一个小比例作为偏移量，避免绝对值过大或过小
         y_range = df['Price'].max() - df['Price'].min()
-        # --- 修改：进一步增大偏移量 ---
         offset = y_range * 0.05 # Y轴范围的 5% 作为偏移
-        # --- 结束修改 ---
 
         # --- 绘制金叉标记 --- 
         for i in range(len(golden_cross_points)):
@@ -1535,7 +1510,6 @@ def create_visualization(df, optimized_rsi_threshold):
             fig.add_annotation(
                 x=point['日期'],
                 y=point['Price'] - offset, # 放在价格下方
-                # --- 修改：加粗箭头，增大字号，添加背景和边框 ---
                 text="<b>↑</b>",
                 showarrow=False,
                 font=dict(size=18, color="green"),
@@ -1543,8 +1517,6 @@ def create_visualization(df, optimized_rsi_threshold):
                 bordercolor='rgba(0, 0, 0, 0.5)',   # 半透明黑色边框
                 borderwidth=1,
                 borderpad=2,                        # 背景内边距
-                # --- 结束修改 ---
-                # 更新悬停文本，明确是视觉交叉
                 hovertext=f"<b>📈 EMA视觉金叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
                 hoverlabel=dict(bgcolor="white"),
                 yanchor="top"
@@ -1556,16 +1528,13 @@ def create_visualization(df, optimized_rsi_threshold):
             fig.add_annotation(
                 x=point['日期'],
                 y=point['Price'] + offset, # 放在价格上方
-                 # --- 修改：加粗箭头，增大字号，添加背景和边框 ---
-                text="<b>↓</b>",
+                 text="<b>↓</b>",
                 showarrow=False,
                 font=dict(size=18, color="red"),
                 bgcolor='rgba(255, 255, 255, 0.7)', # 半透明白色背景
                 bordercolor='rgba(0, 0, 0, 0.5)',   # 半透明黑色边框
                 borderwidth=1,
                 borderpad=2,                        # 背景内边距
-                # --- 结束修改 ---
-                # 更新悬停文本，明确是视觉交叉
                 hovertext=f"<b>📉 EMA视觉死叉</b><br>日期: {point['日期']:%Y-%m-%d}<br>价格: {point['Price']:.2f}",
                 hoverlabel=dict(bgcolor="white"),
                 yanchor="bottom"
@@ -1586,45 +1555,38 @@ def create_visualization(df, optimized_rsi_threshold):
         ), row=1, col=1)
 
     # --- 保留原始采购信号标记 --- 
-    # 同样移除 legendgroup
     signal_df = df[df['采购信号']]
     if not signal_df.empty:
         fig.add_trace(go.Scatter(x=signal_df['日期'], y=signal_df['Price'], mode='markers', name='⭐采购信号⭐',
                                  marker=dict(color='red', size=8, symbol='triangle-up', line=dict(width=1, color='black')),
-                                 # legendgroup='signal', legendrank=5, 
                                  hovertemplate=hovertemplate_signal),
                       row=1, col=1)
 
     # --- 行 2: 策略指标分析 --- 
-    # 移除 legendgroup
     fig.add_trace(go.Scatter(x=df['日期'], y=df['工业指标'], mode='lines', name='核心工业指标',
-                             line=dict(color='royalblue'), # legendgroup='indicator', legendrank=8,
+                             line=dict(color='royalblue'),
                              hovertemplate=hovertemplate_indicator),
                   row=2, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['基线阈值_短'], mode='lines', name=f'短期阈值 ({HISTORY_WINDOW_SHORT}日)',
-                             line=dict(color='darkorange', dash='dot', width=1), # legendgroup='indicator', legendrank=9, 
+                             line=dict(color='darkorange', dash='dot', width=1),
                              opacity=0.7,
                              hovertemplate=hovertemplate_threshold),
                   row=2, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['基线阈值'], mode='lines', name=f'中期阈值 ({HISTORY_WINDOW}日) - 警戒线',
-                             line=dict(color='crimson', dash='dash', width=1.5), # legendgroup='indicator', legendrank=10,
+                             line=dict(color='crimson', dash='dash', width=1.5),
                              hovertemplate=hovertemplate_threshold),
                   row=2, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['基线阈值_长'], mode='lines', name=f'长期阈值 ({HISTORY_WINDOW_LONG}日)',
-                             line=dict(color='purple', dash='dashdot', width=1), # legendgroup='indicator', legendrank=11, 
+                             line=dict(color='purple', dash='dashdot', width=1),
                              opacity=0.8,
                              hovertemplate=hovertemplate_threshold),
                   row=2, col=1)
     
     # 填充区域逻辑保持不变，但填充区域本身不加图例或给个泛指名字
-    # --- 修改：填充区域基于长期阈值 ---
-    # y_upper = df['基线阈值'] # 原来的中期阈值
     y_upper = df['基线阈值_长'] # 改为长期阈值
     y_lower = df['工业指标']
     y_fill_lower = y_upper.copy()
-    # fill_mask = y_lower < y_upper # 原来的比较
     fill_mask = y_lower < df['基线阈值_长'] # 改为与长期阈值比较
-    # --- 结束修改 ---
     y_fill_lower[fill_mask] = y_lower[fill_mask]
     # 上边界（透明）
     fig.add_trace(go.Scatter(x=df['日期'], y=y_upper, fill=None, mode='lines', line_color='rgba(0,0,0,0)', showlegend=False, hoverinfo='skip'), row=2, col=1)
@@ -1634,10 +1596,7 @@ def create_visualization(df, optimized_rsi_threshold):
                              mode='lines',
                              line=dict(width=0),
                              fillcolor='rgba(144, 238, 144, 0.3)',
-                             # --- 修改：更新图例名称 ---
                              name='指标<长期阈值区域', # 简洁图例名
-                             # --- 结束修改 ---
-                             # legendgroup='indicator', legendrank=12, 
                              hovertemplate=hovertemplate_fill # 悬停文本可以保持不变，因为它显示的是指标值
                              ), row=2, col=1)
     
@@ -1646,14 +1605,13 @@ def create_visualization(df, optimized_rsi_threshold):
 
     # --- 行 3: 动量指标分析 (更新RSI参考线) ---
     fig.add_trace(go.Scatter(x=df['日期'], y=df['修正RSI'], mode='lines', name='修正RSI (市场强弱)',
-                             line=dict(color='darkviolet'), # legendgroup='momentum', legendrank=13,
+                             line=dict(color='darkviolet'),
                              hovertemplate=hovertemplate_rsi),
                   row=3, col=1)
     fig.add_trace(go.Scatter(x=df['日期'], y=df['RSI阈值'], mode='lines', name='动态RSI阈值',
-                             line=dict(color='darkorange', dash='dash'), # legendgroup='momentum', legendrank=14,
+                             line=dict(color='darkorange', dash='dash'),
                              hovertemplate=hovertemplate_rsi_threshold),
                   row=3, col=1)
-    # --- 修改：使用优化后的 RSI 阈值绘制水平线及其标注 --- 
     fig.add_hline(y=optimized_rsi_threshold, line_dash="dot", line_color="red", opacity=0.5, 
                   annotation_text=f"RSI超卖参考线={optimized_rsi_threshold} (买入条件2)", 
                   row=3, col=1, name=f"RSI {optimized_rsi_threshold}")
@@ -1665,8 +1623,6 @@ def create_visualization(df, optimized_rsi_threshold):
         hovermode='x unified',
         legend_title_text='图例说明 (点击可隐藏/显示)', # 更新图例标题
         margin=dict(l=60, r=60, t=100, b=60),
-        # 移除 legend traceorder 或设置为 'normal' 让其按添加顺序显示
-        # legend=dict(traceorder='reversed+grouped') 
         legend=dict(traceorder='normal')
     )
     fig.update_yaxes(title_text="价格 (CNY)", row=1, col=1)
@@ -1700,11 +1656,8 @@ def create_backtest_visualization(df, dca_interval, optimized_quantile, optimize
     df_backtest['cost_strategy'] = df_backtest['Price'].where(df_backtest['purchase_strategy'], 0)
     df_backtest['cum_quantity_strategy'] = df_backtest['purchase_strategy'].astype(int).cumsum()
     df_backtest['cum_cost_strategy'] = df_backtest['cost_strategy'].cumsum()
-    # --- 修改: 使用赋值代替 inplace=True ---
     df_backtest['avg_cost_strategy'] = (df_backtest['cum_cost_strategy'] / df_backtest['cum_quantity_strategy'])
-    # --- 修改: 使用 .ffill() 代替 fillna(method='ffill') ---
     df_backtest['avg_cost_strategy'] = df_backtest['avg_cost_strategy'].ffill()
-    # --- 结束修改 ---
     df_backtest['avg_cost_strategy'] = df_backtest['avg_cost_strategy'].fillna(0) # 这一行保持不变
 
     # 获取策略总购买次数
@@ -1948,7 +1901,6 @@ if __name__ == "__main__":
                  'rsi': 50, 'rsi_oversold_diff': 0, 'rsi_diff_desc': 'N/A', 'price': 0,
                  'ema21': 0, 'lower_band_ref': 0, 'ema_ratio': 1, 'dynamic_ema_threshold': 1,
                  'volatility': 0, 'vol_threshold': 0, 'peak_status_display': 'N/A',
-                 # --- REMOVED default interval data --- 
                  'base_req_met': False, 'block_reasons': ['报告数据生成失败']
              }
 
@@ -1964,7 +1916,6 @@ if __name__ == "__main__":
             'rsi': 50, 'rsi_oversold_diff': 0, 'rsi_diff_desc': 'N/A', 'price': 0,
             'ema21': 0, 'lower_band_ref': 0, 'ema_ratio': 1, 'dynamic_ema_threshold': 1,
             'volatility': 0, 'vol_threshold': 0, 'peak_status_display': 'N/A',
-            # --- REMOVED default interval data --- 
             'base_req_met': False, 'block_reasons': ['报告数据生成失败']
         }
 
@@ -2246,6 +2197,16 @@ if __name__ == "__main__":
         print(f"执行 Git 命令或处理过程中发生未知错误: {e}")
 
     print("\n分析完成。")
+
+    # --- 调用买入后短期表现分析 ---
+    if not df_report.empty:
+        try:
+             analyze_post_purchase_performance(df_report.copy())
+        except Exception as e:
+            print(f"执行买入后分析时出错: {e}")
+            traceback.print_exc()
+    else:
+         print("df_report 为空，跳过买入后分析。")
 
 
 # --- 定义：Pass 2 最终指标计算 ---
