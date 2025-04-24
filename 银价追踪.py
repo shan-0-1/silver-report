@@ -928,7 +928,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     # --- 构建 HTML 报告字符串 (加入参数显示) ---
     report_html = f"""
     <div style="font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: auto; padding: 20px; border: 1px solid #eee; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
-        <h2 style="text-align: center; border-bottom: 1px solid #ccc; padding-bottom: 10px;">银价采购分析报告</h2>
+        <h2 style="text-align: center; border-bottom: 1px solid #ccc; padding-bottom: 10px;">银价采购分析报告 </h2>
         <p><strong>报告日期：</strong>{current['日期'].strftime('%Y-%m-%d')}</p>
         <p><strong>使用参数：</strong> <span title="工业指标阈值计算所用的分位数">基线分位数: {optimized_quantile:.2f}</span> | <span title="RSI买入条件所用的阈值">RSI阈值: {optimized_rsi_threshold}</span></p>
         <p><strong title='{HOVER_TEXTS['price']}'>当前价格：</strong>{price:.2f} CNY</p>
@@ -1173,11 +1173,13 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
             # 构建 HTML 表格展示结果
             recent_cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
-            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th>近期平均采购成本 (CNY)</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            # --- Add hover annotation to the average cost column header --- 
+            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th title='计算: 在指定周期内，每次触发相应条件时买入的价格的算术平均值。'>近期平均采购成本 (CNY)</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            # --- End hover annotation addition ---
             for name, (cost, adv_rate, points) in results.items():
-                 # 为优势率添加悬停解释
-                 adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
-                 recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
+                  # 为优势率添加悬停解释
+                  adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
+                  recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
             recent_cost_analysis_html += "</tbody></table>"
 
         else:
