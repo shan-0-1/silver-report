@@ -11,7 +11,7 @@ import datetime # 用于生成提交信息时间戳
 #import optuna  <--- 新增: 导入 Optuna
 import traceback # <--- 新增：用于打印详细错误信息
 
-def calculate_final_metrics(df_pass1_output, baseline_quantile=0.3631):
+def calculate_final_metrics(df_pass1_output, baseline_quantile):
     """
     Pass 2: Calculate final metrics using correct dynamic windows based on preliminary signals.
     Recalculates metrics dependent on dynamic windows.
@@ -201,7 +201,7 @@ def calculate_final_metrics(df_pass1_output, baseline_quantile=0.3631):
 
 
 # --- 新增：Pass 2 最终信号生成 ---
-def generate_final_signals(df_final_metrics, rsi_threshold=33):
+def generate_final_signals(df_final_metrics, rsi_threshold):
     """
     Pass 2: Generate final signals based on the finalized metrics.
     This uses the same core logic as generate_signals but uses final metrics.
@@ -350,7 +350,7 @@ WINDOW_WEIGHT_FACTOR = 0.8  # 窗口参数在决策中的权重占比
 WINDOW_CHANGE_THRESHOLD = 0.2  # 窗口变化显著阈值
 
 
-def calculate_strategy_pass1(df, baseline_quantile=0.3631): # Rename for clarity
+def calculate_strategy_pass1(df, baseline_quantile): # Rename for clarity
     """Pass 1: Calculate initial metrics using fixed windows where necessary."""
     df_pass1 = df.copy() # Work on a copy
 
@@ -480,7 +480,7 @@ def calculate_strategy_pass1(df, baseline_quantile=0.3631): # Rename for clarity
     return df_pass1
 
 
-def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加默认参数
+def calculate_strategy(df, baseline_quantile, rsi_threshold):
     """优化后的策略计算核心"""
     # 计算自上次采购以来的天数
     df['signal_flag'] = df['采购信号'].astype(int)
@@ -714,7 +714,7 @@ def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加
     return df
 
 
-def generate_signals(df_pass1, rsi_threshold=33): # Pass 1: Generate preliminary signals
+def generate_signals(df_pass1, rsi_threshold): # Pass 1: Generate preliminary signals
     """根据 Pass 1 的初步指标生成初步信号."""
     df_processed = df_pass1.copy()
     df_processed['preliminary_signal'] = False
@@ -1309,6 +1309,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     # --- Restore necessary calculations for analysis_data --- 
     indicator_threshold_diff = threshold - indicator # 正数表示低于阈值
     rsi_oversold_threshold = optimized_rsi_threshold # 使用优化后的阈值
+    # --- Ensure calculation uses the parameter --- 
     rsi_oversold_diff = rsi_oversold_threshold - rsi # 正数表示低于阈值 (超卖倾向)
 
     # --- 为指标差距添加更详细的定性描述 --- 
@@ -1325,7 +1326,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         indicator_diff_desc = f"仍高于阈值 ({indicator:.2f} vs {threshold:.2f}，差距{abs(indicator_threshold_diff):.2f})"
         
     rsi_diff_desc = ""
-    # --- 使用更清晰的RSI描述逻辑 --- 
+    # --- 使用更清晰的RSI描述逻辑, 并确保使用参数 --- 
     if rsi < rsi_oversold_threshold - 10: # RSI 比阈值低 10 点以上
         rsi_diff_desc = f"深入超卖区域 (RSI {rsi:.1f}, 低于阈值 {rsi_oversold_threshold})"
     elif rsi < rsi_oversold_threshold - 5: # RSI 比阈值低 5-10 点
@@ -1333,7 +1334,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     elif rsi < rsi_oversold_threshold: # RSI 比阈值低 0-5 点
         rsi_diff_desc = f"接近超卖区域 (RSI {rsi:.1f}, 低于阈值 {rsi_oversold_threshold})"
     elif rsi == rsi_oversold_threshold: # RSI 恰好等于阈值
-        rsi_diff_desc = f"恰好在超卖线 (RSI {rsi:.1f})"
+        rsi_diff_desc = f"恰好在超卖线 (RSI {rsi:.1f}, 阈值 {rsi_oversold_threshold})" # Updated text
     elif rsi < rsi_oversold_threshold + 5: # RSI 比阈值高 0-5 点
          rsi_diff_desc = f"略高于超卖线 (RSI {rsi:.1f}, 阈值 {rsi_oversold_threshold})"
     else: # RSI 比阈值高 5 点以上
@@ -1801,10 +1802,10 @@ def objective(trial, df_original):
     try:
         # 2. 使用建议的参数运行策略计算 (假设执行两轮)
         # 注意：这里需要传递参数给函数
-        df_processed = calculate_strategy(df_temp, baseline_quantile=baseline_quantile)
+        df_processed = calculate_strategy(df_temp, baseline_quantile=baseline_quantile, rsi_threshold=rsi_threshold)
         df_signaled = generate_signals(df_processed, rsi_threshold=rsi_threshold)
         # 第二轮计算也需要使用相同参数
-        df_processed_r2 = calculate_strategy(df_signaled.copy(), baseline_quantile=baseline_quantile) # 使用副本避免干扰
+        df_processed_r2 = calculate_strategy(df_signaled.copy(), baseline_quantile=baseline_quantile, rsi_threshold=rsi_threshold) # 使用副本避免干扰
         df_final = generate_signals(df_processed_r2, rsi_threshold=rsi_threshold)
 
 
@@ -1851,8 +1852,8 @@ if __name__ == "__main__":
     df_main = load_silver_data()
 
     # --- 获取优化参数 (保持不变) ---
-    optimized_quantile = 0.3631
-    optimized_rsi_threshold = 33
+    optimized_quantile = 0.5
+    optimized_rsi_threshold = 40
     print("\n将使用固定的指定参数生成最终报告：")
     print(f"  baseline_quantile: {optimized_quantile:.4f}")
     print(f"  rsi_threshold: {optimized_rsi_threshold}")
