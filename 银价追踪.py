@@ -2212,77 +2212,7 @@ if __name__ == "__main__":
 # --- 定义：Pass 2 最终指标计算 ---
 
 # --- 新增: 买入后短期表现分析 ---
-def analyze_post_purchase_performance(df_results, periods=[5, 10, 20]):
-    """
-    分析并比较不同买入信号触发后未来 N 天的价格表现。
 
-    Args:
-        df_results (pd.DataFrame): 包含 '日期', 'Price', '采购信号', '工业指标', '基线阈值_长' 列的最终结果 DataFrame。
-        periods (list): 要分析的未来天数列表 (例如 [5, 10, 20])。
-
-    Returns:
-        None: 直接打印分析结果。
-    """
-    df = df_results.copy()
-    required_cols = ['Price', '采购信号', '工业指标', '基线阈值_长']
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        print(f"警告: 缺少进行买入后分析所需的列: {', '.join(missing_cols)}。跳过分析。")
-        return
-
-    results = {} # 存储分析结果
-
-    # 1. 计算未来 N 天的收益率
-    price_series = df['Price']
-    for N in periods:
-        # 计算未来第 N 天的价格相对于当天的变化百分比
-        # (Price[t+N] / Price[t]) - 1
-        df[f'future_ret_{N}d'] = (price_series.shift(-N) / price_series) - 1
-
-    # 2. 识别买入点
-    strategy_buy_indices = df.index[df['采购信号']]
-
-    # 模拟"低于长期阈值"买入信号
-    if '工业指标' in df.columns and '基线阈值_长' in df.columns:
-        long_threshold_signal = df['工业指标'] < df['基线阈值_长']
-        long_threshold_buy_indices = df.index[long_threshold_signal]
-    else:
-        long_threshold_buy_indices = pd.Index([]) # 如果缺少列，则没有买点
-        print("警告：无法模拟'低于长期阈值'信号，相关分析将为空。")
-
-    # 3. 分析各策略表现
-    strategies_to_analyze = {
-        "实际策略信号": strategy_buy_indices,
-        "低于长期阈值": long_threshold_buy_indices
-    }
-
-    print("\n--- 买入后短期表现分析 (未来 N 天价格变化百分比) ---")
-    print(f"{'分析周期':<10} | {'策略/信号':<15} | {'买入次数':<8} | {'平均收益':<10} | {'收益中位数':<12} | {'正收益概率':<12}")
-    print("-" * 70)
-
-    for N in periods:
-        ret_col = f'future_ret_{N}d'
-        for name, indices in strategies_to_analyze.items():
-            if indices.empty:
-                print(f"{f'{N} 天':<10} | {name:<15} | {'0':<8} | {'N/A':<10} | {'N/A':<12} | {'N/A':<12}")
-                continue
-
-            # 获取买入点对应的未来收益率，并移除 NaN (通常发生在期末)
-            future_returns = df.loc[indices, ret_col].dropna()
-
-            if future_returns.empty:
-                 print(f"{f'{N} 天':<10} | {name:<15} | {len(indices):<8} | {'N/A (无足够未来数据)':<10} | {'N/A':<12} | {'N/A':<12}")
-                 continue
-
-            num_signals = len(indices) # 原始信号数
-            num_valid_returns = len(future_returns) # 有效计算收益的信号数
-
-            avg_ret = future_returns.mean()
-            median_ret = future_returns.median()
-            win_rate = (future_returns > 0).mean() # 正收益概率
-
-            print(f"{f'{N} 天':<10} | {name:<15} | {f'{num_valid_returns}/{num_signals}' :<8} | {f'{avg_ret:+.2%}' :<10} | {f'{median_ret:+.2%}' :<12} | {f'{win_rate:.1%}' :<12}")
-        print("-" * 70)
 
 
 
