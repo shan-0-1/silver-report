@@ -587,6 +587,8 @@ def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加
     loss = -delta.where(delta < 0, 0).rolling(14).mean()
     # --- 避免除以零 ---
     rs = gain / loss.replace(0, np.nan) # 替换 0 为 NaN
+    # 修正RSI（Relative Strength Index）: 衡量近期价格上涨和下跌力量的对比。
+    # 通常低于30被视为"超卖"(Oversold)，表示价格可能下跌过度；高于70被视为"超买"(Overbought)，表示价格可能上涨过度。
     df['修正RSI'] = 100 - (100 / (1 + rs))
     df['修正RSI'] = df['修正RSI'].fillna(50) # 用中性值 50 填充 NaN
     # --- 结束除零 ---
@@ -602,6 +604,8 @@ def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加
     df['EMA9'] = df['EMA9'].bfill()
     df['EMA21'] = df['EMA21'].bfill()
     # --- 结束修改 --- 
+    # ema9_above_ema21: 判断短期EMA(9日)是否在中期EMA(21日)之上。
+    # True表示"金叉"状态（看涨倾向），False表示"死叉"状态（看跌倾向）。
     df['ema9_above_ema21'] = df['EMA9'] > df['EMA21']
     # --- 结束新增 --- 
 
@@ -609,7 +613,9 @@ def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加
     df['ema_ratio'] = df['ema_ratio'].fillna(1.0) # 中性填充
 
     # 修改EMA金叉条件计算公式 (此列仍用于 core_cond5)
+    # dynamic_ema_threshold: 基于波动性调整的EMA比率阈值。
     df['dynamic_ema_threshold'] = 1 + (0.5 * df['动量因子'])  # 使阈值与波动率正相关
+    # EMA金叉(条件5中使用): 判断短期EMA是否显著强于中期EMA。
     df['EMA金叉'] = df['ema_ratio'] > df['dynamic_ema_threshold'] 
     # 增加EMA合理性检查 (此列仍用于 core_cond5)
     df['EMA金叉'] = df['EMA金叉'] & (df['dynamic_ema_threshold'] < 1.5)
@@ -646,6 +652,10 @@ def calculate_strategy(df, baseline_quantile=0.3631, rsi_threshold=33): # 添加
 
     # 改进EMA系统
     df['EMA梯度'] = df['EMA21'] - df['EMA50']
+    # EMA趋势: 基于EMA相对位置判断趋势状态。
+    # 1: 上涨趋势 (EMA9 > EMA21 且 EMA21 > EMA50)
+    # -1: 下跌趋势 (EMA9 < EMA21 且 EMA21 < EMA50)
+    # 0: 其他（震荡或趋势不明）
     df['EMA趋势'] = np.where(
         (df['EMA9'] > df['EMA21']) & (df['EMA梯度'] > 0),
         1,
@@ -959,19 +969,19 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         'volatility': f"计算思路: 最近 {int(current.get('动态短窗口', BASE_WINDOW_SHORT))} 天内每日价格变化百分比绝对值的平均值。此指标衡量价格波动的剧烈程度（即近期波动率），值越低表示市场越平静。注意：名称可能易误导，它主要反映波动性而非趋势动量。",
         'core_cond1': f"工业指标 ({indicator:.2f}) 是否低于基线阈值 ({threshold:.2f})？",
         # --- 修改：在描述中加入 rsi 参数 --- 
-        'core_cond2': f"修正RSI ({rsi:.1f}) 是否低于 {optimized_rsi_threshold}？RSI通过计算一定时期内上涨日和下跌日的平均涨跌幅得到，衡量买卖力量，低于此值表示超卖。",
+        'core_cond2': f"修正RSI ({rsi:.1f}) 是否低于 {optimized_rsi_threshold}？RSI通过计算一定时期内上涨日和下跌日的平均涨跌幅得到，衡量买卖力量对比，低于此值表示可能超卖（下跌过度）。",
         'core_cond3': f"当前价格 ({price:.2f}) 是否低于 EMA21 ({ema21:.2f})？EMA是指数移动平均线，给予近期价格更高权重。",
         'core_cond4': f"当前价格 ({price:.2f}) 是否低于布林下轨 ({lower_band:.2f}) 的 1.05 倍 ({lower_band * 1.05:.2f})？布林通道基于移动平均线加减标准差得到，衡量价格相对波动范围。",
         'core_cond5': f"EMA9/EMA21比率 ({ema_ratio:.3f}) 是否大于动态阈值 ({dynamic_threshold:.3f})？该阈值会根据波动性调整。",
-        'core_cond6': f"动量因子 ({volatility:.3f}) 是否低于其动态阈值 ({vol_threshold:.3f})？该阈值是动量因子自身的45日35%分位数。",
+        'core_cond6': f"波动率因子 ({volatility:.3f}) 是否低于其动态阈值 ({vol_threshold:.3f})？该阈值是波动率因子自身的45日35%分位数。",
         'cond_score': f"满足以上6个核心条件的数量（部分条件阈值可能已优化），至少需要满足4个才能初步考虑买入。", # 更新提示
-        'peak_filter': f"一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨80%以上位置，用于排除一些潜在的顶部信号。",
+        'peak_filter': f"一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨80%以上位置（可能短期过热），用于排除一些潜在的顶部信号。",
         'interval': f"距离上次系统发出买入信号的天数，要求至少间隔 {MIN_PURCHASE_INTERVAL} 天才能再次买入。",
         'window_decay': "显示当前动态短窗口相比基准窗口缩短了多少天，反映了衰减机制的效果。",
-        'ema_trend': f"基于EMA9, EMA21, EMA50的相对位置判断短期趋势。当EMA9>EMA21且EMA21>EMA50时为多头，反之为空头。",
+        'ema_trend': f"基于EMA9, EMA21, EMA50的相对位置判断短期趋势。状态为1代表上涨趋势，-1代表下跌趋势。", # Modified explanation
         'final_block': "总结导致最终未能产生买入信号的具体原因。",
         '3day_change': "最近三个交易日的价格变化绝对值和方向。",
-        'ema_crossover': "基于 EMA9 和 EMA21 的直接相对位置。金叉状态 (EMA9 > EMA21) 通常视为看涨倾向，死叉状态 (EMA9 < EMA21) 通常视为看跌倾向。图表上的标记 (↑/↓) 显示精确的交叉点。" # 新增EMA交叉解释
+        'ema_crossover': "基于 EMA9 和 EMA21 的直接相对位置。金叉状态 (EMA9 > EMA21) 通常视为看涨倾向，死叉状态 (EMA9 < EMA21) 通常视为看跌倾向。图表上的标记 (↑/↓) 显示精确的交叉点。" # Explanation for EMA crossover
     }
 
     # --- 构建 HTML 报告字符串 (加入参数显示) ---
@@ -1027,11 +1037,11 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         'core': {
             'cond1': ("工业指标 < 阈值", f"{indicator:.2f} < {threshold:.2f}", HOVER_TEXTS['core_cond1']),
             # --- 修改：使用优化后的 RSI 阈值 --- 
-            'cond2': (f"RSI < {optimized_rsi_threshold} (超卖区域)", f"RSI {rsi:.1f} < {optimized_rsi_threshold}", HOVER_TEXTS['core_cond2']),
+            'cond2': (f"RSI < {optimized_rsi_threshold} (可能超卖)", f"RSI {rsi:.1f} < {optimized_rsi_threshold}", HOVER_TEXTS['core_cond2']),
             'cond3': ("价格 < EMA21", f"价格 {price:.2f} < EMA21 {ema21:.2f}", HOVER_TEXTS['core_cond3']),
             'cond4': ("价格 < 布林下轨附近", f"价格 {price:.2f} < 下轨参考 {lower_band * 1.05:.2f}", HOVER_TEXTS['core_cond4']),
             'cond5': ("短期EMA动能 > 阈值", f"EMA比率 {ema_ratio:.3f} > 阈值 {dynamic_threshold:.3f}", HOVER_TEXTS['core_cond5']),
-            'cond6': ("波动性 < 阈值 (市场平静)", f"波动 {volatility:.3f} < 阈值 {vol_threshold:.3f}", HOVER_TEXTS['core_cond6'])
+            'cond6': ("波动率 < 阈值 (市场平静)", f"波动 {volatility:.3f} < 阈值 {vol_threshold:.3f}", HOVER_TEXTS['core_cond6'])
         }
     }
 
@@ -1104,12 +1114,10 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     report_html += f"<li title='{HOVER_TEXTS['window_decay'].replace('\"','&quot;')}'>窗口衰减效果：当前短窗口比基准小 {window_effect}天 (基准{BASE_WINDOW_SHORT} → 当前{int(current.get('动态短窗口', BASE_WINDOW_SHORT))})</li>" # 确保是整数
 
     ema_trend_val = current.get('EMA趋势', 0)
-    ema_trend_text = '<span style="color:green;">多头</span>' if ema_trend_val == 1 else '<span style="color:red;">空头</span>' if ema_trend_val == -1 else "震荡"
-    # 原来的代码类似:
-    # report_html += f"<li title='{HOVER_TEXTS['ema_trend'].replace('\"','&quot;')}'>EMA趋势状态：{ema_trend_text}</li>"
-    
+    ema_trend_text = '<span style="color:green;">上涨趋势</span>' if ema_trend_val == 1 else '<span style="color:red;">下跌趋势</span>' if ema_trend_val == -1 else "震荡"
     # 修改为 (注意格式化 ema9, ema21, ema50):
-    report_html += f"<li title='基于EMA9({ema9:.2f}), EMA21({ema21:.2f}), EMA50({ema50:.2f})的相对位置判断短期趋势。当EMA9>EMA21且EMA21>EMA50时为多头，反之为空头。'>EMA趋势状态：{ema_trend_text}</li>"
+    # 使用 HOVER_TEXTS['ema_trend'] 中的解释
+    report_html += f"<li title='{HOVER_TEXTS['ema_trend'].replace('"','&quot;')}'>EMA趋势状态：{ema_trend_text}</li>"
 
     report_html += "</ul>"
 
@@ -1284,18 +1292,23 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         indicator_diff_desc = f"仍高于阈值 ({indicator:.2f} vs {threshold:.2f}，差距{abs(indicator_threshold_diff):.2f})"
         
     rsi_diff_desc = ""
-    if rsi_oversold_diff > 10: # RSI < 35
-        rsi_diff_desc = f"深入超卖区 ({rsi:.1f} vs 45)"
-    elif rsi_oversold_diff > 5: # 35 <= RSI < 40
-        rsi_diff_desc = f"位于超卖区 ({rsi:.1f} vs 45)"
-    elif rsi_oversold_diff > 0: # 40 <= RSI < 45
-        rsi_diff_desc = f"接近超卖区 ({rsi:.1f} vs 45)"
-    elif rsi_oversold_diff == 0: # RSI = 45
-        rsi_diff_desc = f"恰好在超卖线 ({rsi:.1f})"
-    elif rsi_oversold_diff > -5: # 45 < RSI <= 50
-         rsi_diff_desc = f"略高于超卖线 ({rsi:.1f} vs 45)"
-    else: # RSI > 50
-        rsi_diff_desc = f"远离超卖区 ({rsi:.1f} vs 45)"
+    # 使用 optimized_rsi_threshold 进行比较
+    rsi_oversold_threshold = optimized_rsi_threshold # 使用优化后的阈值
+    rsi_oversold_diff = rsi_oversold_threshold - rsi # 正数表示低于阈值 (超卖倾向)
+    # --- 使用更清晰的RSI描述逻辑 --- 
+    if rsi < rsi_oversold_threshold - 10: # RSI 比阈值低 10 点以上
+        rsi_diff_desc = f"深入超卖区域 (RSI {rsi:.1f}, 低于阈值 {rsi_oversold_threshold})"
+    elif rsi < rsi_oversold_threshold - 5: # RSI 比阈值低 5-10 点
+        rsi_diff_desc = f"位于超卖区域 (RSI {rsi:.1f}, 低于阈值 {rsi_oversold_threshold})"
+    elif rsi < rsi_oversold_threshold: # RSI 比阈值低 0-5 点
+        rsi_diff_desc = f"接近超卖区域 (RSI {rsi:.1f}, 低于阈值 {rsi_oversold_threshold})"
+    elif rsi == rsi_oversold_threshold: # RSI 恰好等于阈值
+        rsi_diff_desc = f"恰好在超卖线 (RSI {rsi:.1f})"
+    elif rsi < rsi_oversold_threshold + 5: # RSI 比阈值高 0-5 点
+         rsi_diff_desc = f"略高于超卖线 (RSI {rsi:.1f}, 阈值 {rsi_oversold_threshold})"
+    else: # RSI 比阈值高 5 点以上
+        rsi_diff_desc = f"远离超卖区域 (RSI {rsi:.1f}, 阈值 {rsi_oversold_threshold})"
+    # --- 结束RSI描述逻辑修改 --- 
 
     signal_strength = "" # 初始化信号强度描述
     if current['采购信号']:
@@ -1926,7 +1939,7 @@ if __name__ == "__main__":
                     {'<li>其余 {} 项辅助条件也满足要求。</li>'.format(analysis_data.get('condition_scores', 0) - 2) if analysis_data.get('condition_scores', 0) > 2 else ''}
                 </ul>
             </li>
-            <li><strong>结论：</strong><span style="color:green;">由于关键买入指标进入策略目标区域，满足了 {analysis_data.get('condition_scores', 'N/A')} 项核心条件，并且无明确的信号阻断因素，策略判定当前形成 <strong>{analysis_data.get('signal_strength', '边缘')}</strong> 的采购信号。</span></li>
+            <li><strong>结论：</strong><span style="color:green;">由于关键买入指标进入策略目标区域，满足了 {analysis_data.get('condition_scores', 'N/A')} 项核心条件，并且无明确的信号阻断因素（如价格形态不利、短期过热或间隔过短），策略判定当前形成 <strong>{analysis_data.get('signal_strength', '边缘')}</strong> 的采购信号。</span></li>
             '''
         else: # 如果是观望
             # Build HTML for signal False case
@@ -2033,7 +2046,7 @@ if __name__ == "__main__":
                     <ul>
                           <li><u>修正RSI (紫色实线)</u>: 相对强弱指数（Relative Strength Index）。它通过比较一定时期内（通常是14天）价格上涨日和下跌日的平均涨跌幅度，来衡量市场买卖双方的力量对比，反映市场的景气程度。RSI的值域在0-100之间。通常认为，当RSI低于某个阈值（如此策略中的{optimized_rsi_threshold}）时，市场可能处于\"超卖\"状态，即下跌可能过度，短期内价格有反弹的可能性；反之，高于某个阈值（如70或80）则可能表示\"超买\"。策略利用RSI的超卖信号作为另一个关键的入场条件。</li>
                            <li><u>动态RSI阈值 (橙虚线)</u>: 基于近期RSI计算的动态阈值线。</li>
-                           <li><u>RSI超卖参考线 (红点线)</u>: 当前策略使用的固定RSI买入阈值 ({optimized_rsi_threshold})。</li>
+                           <li><u>RSI超卖参考线 (红点线)</u>: 当前策略使用的固定RSI买入阈值 ({optimized_rsi_threshold})。低于此线表示市场可能处于"超卖"状态(下跌过度)。</li>
                     </ul>
                 </li>
             </ul>
