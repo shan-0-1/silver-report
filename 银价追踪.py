@@ -295,7 +295,7 @@ BASE_WINDOW_SHORT = 30
 BASE_WINDOW_LONG = 90
 MIN_WINDOW_SHORT = 10
 WINDOW_DECAY_RATE = 0.97
-MIN_PURCHASE_INTERVAL = 2
+# MIN_PURCHASE_INTERVAL = 2 # <-- REMOVED
 
 HISTORY_WINDOW_SHORT = 24
 HISTORY_WINDOW = HISTORY_WINDOW_SHORT * 2
@@ -831,64 +831,6 @@ def peak_filter(df, upper_col='波动上轨', lower_col='波动下轨'): # <-- A
     # Ensure result is boolean Series
     return ~(peak_condition | overbought_atr).astype(bool)
 
-def process_signals(df_final_unprocessed): # Input is df with final unprocessed signals
-    """应用采购间隔限制到最终信号."""
-
-    processed_df = df_final_unprocessed.copy()
-
-    # Ensure signal column exists and is boolean
-    if '采购信号' not in processed_df.columns:
-        processed_df['采购信号'] = False # Should exist, but safeguard
-    processed_df['采购信号'] = processed_df['采购信号'].astype(bool)
-
-    # --- Apply MIN_PURCHASE_INTERVAL filter ---
-    # Check if signal was True in the previous (interval - 1) days
-    signal_int_for_shift = processed_df['采购信号'].astype(int)
-    # Shift to check previous days. shift(1) checks yesterday.
-    # Rolling max over the interval checks the window.
-    # Example: interval=2 -> check rolling(1).max() on shift(1) -> checks yesterday's signal
-    # Example: interval=3 -> check rolling(2).max() on shift(1) -> checks yesterday and day before
-    if MIN_PURCHASE_INTERVAL > 1:
-        # --- Corrected Indentation --- 
-        signal_shifted_int = signal_int_for_shift.shift(1).fillna(0)
-        # Rolling window size is interval - 1 because shift(1) already moved one day back
-        shifted = signal_shifted_int.rolling(
-            window=MIN_PURCHASE_INTERVAL - 1, min_periods=1
-        ).max().astype(bool)
-        processed_df['采购信号'] = processed_df['采购信号'] & ~shifted
-        # --- End Correction ---
-    elif MIN_PURCHASE_INTERVAL == 1:
-         # Original logic prevented back-to-back signals even for interval=1.
-         # If interval=1 means allow back-to-back, this entire block can be skipped.
-         # Let's assume interval=1 still means no back-to-back for now.
-         # --- Corrected Indentation --- 
-         signal_shifted_int = signal_int_for_shift.shift(1).fillna(0)
-         signal_shifted = signal_shifted_int.astype(bool)
-         processed_df['采购信号'] = processed_df['采购信号'] & ~signal_shifted
-         # --- End Correction ---
-
-    # --- REMOVE signal streak limit (optional, was complex/possibly redundant) ---
-    # signal_int = processed_df['采购信号'].astype(int)
-    # group_keys = (~processed_df['采购信号']).cumsum()
-    # signal_streak = signal_int.groupby(group_keys).transform('cumsum')
-    # processed_df['采购信号'] = processed_df['采购信号'] & (signal_streak <= MIN_PURCHASE_INTERVAL)
-    # --- END REMOVAL ---
-
-    # --- REMOVE explicit window reset logic ---
-    # processed_df.loc[processed_df['采购信号'], 'adjustment_cycles'] = 0
-    # processed_df['动态短窗口'] = np.where(...)
-    # processed_df['动态长窗口'] = np.where(...)
-    # --- END REMOVAL ---
-
-    # --- REMOVE relaxed streak limit (optional) ---
-    # signal_streak_total = signal_int.groupby(group_keys).transform('sum')
-    # processed_df['采购信号'] = processed_df['采购信号'] & (signal_streak_total <= MIN_PURCHASE_INTERVAL * 1.5)
-    # --- END REMOVAL ---
-
-
-    return processed_df
-
-
 def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     """
     生成包含详细解释和悬停提示的 HTML 格式分析报告。
@@ -976,7 +918,6 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         'core_cond6': f"波动率因子 ({volatility:.3f}) 是否低于其动态阈值 ({vol_threshold:.3f})？该阈值是波动率因子自身的45日35%分位数。",
         'cond_score': f"满足以上6个核心条件的数量（部分条件阈值可能已优化），至少需要满足4个才能初步考虑买入。", # 更新提示
         'peak_filter': f"一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨80%以上位置（可能短期过热），用于排除一些潜在的顶部信号。",
-        'interval': f"距离上次系统发出买入信号的天数，要求至少间隔 {MIN_PURCHASE_INTERVAL} 天才能再次买入。",
         'window_decay': "显示当前动态短窗口相比基准窗口缩短了多少天，反映了衰减机制的效果。",
         'ema_trend': f"基于EMA9, EMA21, EMA50的相对位置判断短期趋势。状态为1代表上涨趋势，-1代表下跌趋势。", # Modified explanation
         'final_block': "总结导致最终未能产生买入信号的具体原因。",
@@ -1102,12 +1043,14 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     # 简化 title 属性的引号
     report_html += f"<li title='一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：{peak_status_text} | ATR通道位置 {atr_value:.1f}%</li>"
 
-    last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
-    interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
-    interval_ok = interval_days >= MIN_PURCHASE_INTERVAL
-    interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (还需等待 {MIN_PURCHASE_INTERVAL - interval_days}天)</span>'
-    # 简化 title 属性的引号
-    report_html += f"<li title='{HOVER_TEXTS['interval'].replace('\"','&quot;')}'>采购间隔：距离上次已 {interval_days}天 (要求≥{MIN_PURCHASE_INTERVAL}天) → {interval_check_text}</li>"
+    # --- Ensure Interval Check Display and Calculation is Fully Removed --- 
+    # last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
+    # interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
+    # The following line caused the NameError, ensure it's removed/commented:
+    # interval_ok = interval_days >= MIN_PURCHASE_INTERVAL 
+    # interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (还需等待 {MIN_PURCHASE_INTERVAL - interval_days}天)</span>'
+    # report_html += f"<li title='...'>采购间隔：...</li>" # Ensure the display line is also removed/commented
+    # --- End Interval Check Removal ---
 
     window_effect = BASE_WINDOW_SHORT - int(current.get('动态短窗口', BASE_WINDOW_SHORT))
     # 简化 title 属性的引号
@@ -1126,7 +1069,9 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     else:
         block_reasons = []
         if not base_req_met: block_reasons.append("核心条件不足 (未满足≥4项)")
-        if not interval_ok: block_reasons.append(f"采购间隔限制 (还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)") # 确保不显示负数
+        # --- Ensure Interval Reason is Fully Removed --- 
+        # if not interval_ok: block_reasons.append(f"采购间隔限制 (还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)") 
+        # --- End Interval Reason Removal --- 
         if not peak_filter_passed: block_reasons.append("价格形态不利")
         if atr_overbought: block_reasons.append("ATR通道超买 (>80%)")
         reason_str = ' + '.join(block_reasons) if block_reasons else '核心条件未完全满足或其它因素'
@@ -1263,22 +1208,12 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     else:
         peak_status_display = '<span style=\"color:green;\">通过</span>'
 
-    last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
-    interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
-    interval_ok = interval_days >= MIN_PURCHASE_INTERVAL
-    interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (还需等待 {max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)</span>'
-
-    block_reasons = []
-    if not base_req_met: block_reasons.append(f"核心条件不足({condition_scores}/6)")
-    if not interval_ok: block_reasons.append(f"采购间隔限制(还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)")
-    if not peak_filter_passed: block_reasons.append("价格形态不利")
-    if atr_overbought: block_reasons.append(f"ATR通道超买({atr_value:.1f}%)")
-
-    # --- 准备用于动态分析的数据 --- 
+    # --- Restore necessary calculations for analysis_data --- 
     indicator_threshold_diff = threshold - indicator # 正数表示低于阈值
-    rsi_oversold_diff = 45 - rsi # 正数表示低于45
+    rsi_oversold_threshold = optimized_rsi_threshold # 使用优化后的阈值
+    rsi_oversold_diff = rsi_oversold_threshold - rsi # 正数表示低于阈值 (超卖倾向)
 
-    # --- 为指标差距添加更详细的定性描述 ---
+    # --- 为指标差距添加更详细的定性描述 --- 
     indicator_diff_desc = ""
     if indicator_threshold_diff > 0.1:
         indicator_diff_desc = f"显著低于阈值 ({indicator:.2f} vs {threshold:.2f})"
@@ -1292,9 +1227,6 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         indicator_diff_desc = f"仍高于阈值 ({indicator:.2f} vs {threshold:.2f}，差距{abs(indicator_threshold_diff):.2f})"
         
     rsi_diff_desc = ""
-    # 使用 optimized_rsi_threshold 进行比较
-    rsi_oversold_threshold = optimized_rsi_threshold # 使用优化后的阈值
-    rsi_oversold_diff = rsi_oversold_threshold - rsi # 正数表示低于阈值 (超卖倾向)
     # --- 使用更清晰的RSI描述逻辑 --- 
     if rsi < rsi_oversold_threshold - 10: # RSI 比阈值低 10 点以上
         rsi_diff_desc = f"深入超卖区域 (RSI {rsi:.1f}, 低于阈值 {rsi_oversold_threshold})"
@@ -1318,30 +1250,22 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
             signal_strength = "明确信号 (多数条件满足)"
         else: # condition_scores == 4
             signal_strength = "边缘信号 (勉强满足条件)"
-    
-    # ... (peak_status_display, interval_check_text, block_reasons, current_conditions_met 的计算保持不变) ...
-    peak_filter_series = peak_filter(df, upper_col='波动上轨', lower_col='波动下轨')
-    peak_filter_passed = peak_filter_series.iloc[-1] if isinstance(peak_filter_series, pd.Series) else True
-    atr_denominator = atr_upper - atr_lower
-    atr_value = ((price - atr_lower) / atr_denominator) * 100 if atr_denominator != 0 else 50.0
-    atr_overbought = atr_value > 80
-    if not peak_filter_passed:
-        peak_status_display = '<span style="color:red;">形态不利</span>'
-    elif atr_overbought:
-        peak_status_display = f'<span style="color:red;">ATR超买({atr_value:.1f}%)</span>'
-    else:
-        peak_status_display = '<span style="color:green;">通过</span>'
+    # --- End Restored calculations --- 
 
-    last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
-    interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
-    interval_ok = interval_days >= MIN_PURCHASE_INTERVAL
-    interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (还需等待 {max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)</span>'
+    # --- Ensure interval calculation for analysis_data is Fully Removed --- 
+    # last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
+    # interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
+    # interval_ok = interval_days >= MIN_PURCHASE_INTERVAL # Ensure removed
+    # interval_check_text = ... # Ensure removed
+    # --- End Removed interval calculation --- 
 
     base_req_met = condition_scores >= 4 # 这个要在 block_reasons 之前计算
     block_reasons = []
     # 注意：不再将"核心条件不足"加入 block_reasons，因为它会在结论中单独处理
     # if not base_req_met: block_reasons.append(f"核心条件不足({condition_scores}/6)") 
-    if not interval_ok: block_reasons.append(f"采购间隔限制(还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)")
+    # --- Ensure interval block reason is Fully Removed --- 
+    # if not interval_ok: block_reasons.append(f"采购间隔限制(还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)") 
+    # --- End Interval Block Reason Removal --- 
     if not peak_filter_passed: block_reasons.append("价格形态不利")
     if atr_overbought: block_reasons.append(f"ATR通道超买({atr_value:.1f}%)")
 
@@ -1369,9 +1293,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         'volatility': volatility,
         'vol_threshold': vol_threshold,
         'peak_status_display': peak_status_display,
-        'interval_days': interval_days,
-        'interval_check_text': interval_check_text,
-        'min_purchase_interval': MIN_PURCHASE_INTERVAL,
+        # --- REMOVED interval fields from analysis_data --- 
         'base_req_met': base_req_met,
         'block_reasons': block_reasons, # 现在只包含明确的阻断原因
     }
@@ -1853,7 +1775,7 @@ if __name__ == "__main__":
 
     print("\n--- 应用信号处理规则 (采购间隔) ---")
     # 应用信号处理 (采购间隔过滤)
-    df_report = process_signals(df_final_unprocessed) # Final DataFrame for report/viz
+    df_report = df_final_unprocessed # Use unprocessed signals directly
     # --- 结束新的计算流程 ---
 
 
@@ -1877,7 +1799,7 @@ if __name__ == "__main__":
                  'rsi': 50, 'rsi_oversold_diff': 0, 'rsi_diff_desc': 'N/A', 'price': 0,
                  'ema21': 0, 'lower_band_ref': 0, 'ema_ratio': 1, 'dynamic_ema_threshold': 1,
                  'volatility': 0, 'vol_threshold': 0, 'peak_status_display': 'N/A',
-                 'interval_days': 999, 'interval_check_text': 'N/A', 'min_purchase_interval': MIN_PURCHASE_INTERVAL,
+                 # --- REMOVED default interval data --- 
                  'base_req_met': False, 'block_reasons': ['报告数据生成失败']
              }
 
@@ -1893,7 +1815,7 @@ if __name__ == "__main__":
             'rsi': 50, 'rsi_oversold_diff': 0, 'rsi_diff_desc': 'N/A', 'price': 0,
             'ema21': 0, 'lower_band_ref': 0, 'ema_ratio': 1, 'dynamic_ema_threshold': 1,
             'volatility': 0, 'vol_threshold': 0, 'peak_status_display': 'N/A',
-            'interval_days': 999, 'interval_check_text': 'N/A', 'min_purchase_interval': MIN_PURCHASE_INTERVAL,
+            # --- REMOVED default interval data --- 
             'base_req_met': False, 'block_reasons': ['报告数据生成失败']
         }
 
@@ -2050,11 +1972,11 @@ if __name__ == "__main__":
                     </ul>
                 </li>
             </ul>
-              <h3>策略信号生成逻辑 </h3>
-             <p>策略生成采购信号 (▲) 需同时满足两大类条件：</p>
+              <h3>策略信号生成逻辑</h3>
+             <p>策略生成采购信号 (▲) 需满足以下条件：</p>
             <ol>
                   <li><strong>核心条件达标：</strong>综合考量核心工业指标、RSI、价格与均线/通道关系、市场波动性等多个维度，需达到预设的触发数量（当前为至少4项）。这些指标现在基于考虑了信号历史的动态窗口进行计算。</li>
-                  <li><strong>无信号阻断：</strong>排除近期不利价格形态、ATR超买以及过于频繁的信号（需满足最小间隔天数，当前为{MIN_PURCHASE_INTERVAL}天）。</li>
+                  <li><strong>无信号阻断：</strong>排除近期不利价格形态或ATR通道超买（短期过热）的情况。</li>
             </ol>
               """
              }
