@@ -1115,73 +1115,97 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
             # --- 1. 实际策略信号 (Recent) ---
             strategy_purchases_recent = df_recent[df_recent['采购信号']]
             strategy_points_recent = len(strategy_purchases_recent)
+            avg_interval_recent_text = "N/A"
+            max_interval_recent_text = "N/A" # NEW: Init max interval text
             if strategy_points_recent > 0:
                 avg_strategy_cost_recent = safe_float(strategy_purchases_recent['Price'].mean())
-                if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_strategy_cost_recent) / avg_market_price_recent) * 100
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                avg_interval_recent = total_days_recent / strategy_points_recent if strategy_points_recent > 0 else float('inf')
-                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
-                results_recent['实际策略信号'] = (f"{avg_strategy_cost_recent:.2f}", advantage_text, strategy_points_recent, avg_interval_recent_text)
+                advantage_rate = ((avg_market_price_recent - avg_strategy_cost_recent) / avg_market_price_recent) * 100 if avg_market_price_recent > 0 else 0
+                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_recent > 0 else "N/A (市场均价为0)"
+                avg_interval_recent = total_days_recent / strategy_points_recent
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}"
+                # NEW: Calculate max interval if >= 2 points
+                if strategy_points_recent >= 2:
+                    intervals = np.diff(strategy_purchases_recent.index)
+                    max_interval_recent = np.max(intervals)
+                    max_interval_recent_text = f"{max_interval_recent}"
+                # END NEW
+                results_recent['实际策略信号'] = (f"{avg_strategy_cost_recent:.2f}", advantage_text, strategy_points_recent, avg_interval_recent_text, max_interval_recent_text) # NEW: Add max text
             else:
-                results_recent['实际策略信号'] = ("N/A", "无采购", 0, "N/A")
+                results_recent['实际策略信号'] = ("N/A", "无采购", 0, "N/A", "N/A") # NEW: Add max text placeholder
 
             # --- 2. 低于短期阈值 (Recent) ---
             short_thresh_buys_recent = df_recent[df_recent['工业指标'] < df_recent['基线阈值_短']]
             short_points_recent = len(short_thresh_buys_recent)
+            avg_interval_recent_text = "N/A"
+            max_interval_recent_text = "N/A" # NEW: Init max interval text
             if short_points_recent > 0:
                 avg_short_thresh_cost_recent = safe_float(short_thresh_buys_recent['Price'].mean())
-                if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_short_thresh_cost_recent) / avg_market_price_recent) * 100
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                avg_interval_recent = total_days_recent / short_points_recent if short_points_recent > 0 else float('inf')
-                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
-                results_recent['低于短期阈值'] = (f"{avg_short_thresh_cost_recent:.2f}", advantage_text, short_points_recent, avg_interval_recent_text)
+                advantage_rate = ((avg_market_price_recent - avg_short_thresh_cost_recent) / avg_market_price_recent) * 100 if avg_market_price_recent > 0 else 0
+                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_recent > 0 else "N/A (市场均价为0)"
+                avg_interval_recent = total_days_recent / short_points_recent
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}"
+                # NEW: Calculate max interval if >= 2 points
+                if short_points_recent >= 2:
+                    intervals = np.diff(short_thresh_buys_recent.index)
+                    max_interval_recent = np.max(intervals)
+                    max_interval_recent_text = f"{max_interval_recent}"
+                # END NEW
+                results_recent['低于短期阈值'] = (f"{avg_short_thresh_cost_recent:.2f}", advantage_text, short_points_recent, avg_interval_recent_text, max_interval_recent_text) # NEW: Add max text
             else:
-                results_recent['低于短期阈值'] = ("N/A", "无触发", 0, "N/A")
+                results_recent['低于短期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
 
             # --- 3. 低于中期阈值 (Recent) ---
             mid_thresh_buys_recent = df_recent[df_recent['工业指标'] < df_recent['基线阈值']]
             mid_points_recent = len(mid_thresh_buys_recent)
+            avg_interval_recent_text = "N/A"
+            max_interval_recent_text = "N/A" # NEW: Init max interval text
             if mid_points_recent > 0:
                 avg_mid_thresh_cost_recent = safe_float(mid_thresh_buys_recent['Price'].mean())
-                if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_mid_thresh_cost_recent) / avg_market_price_recent) * 100
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                avg_interval_recent = total_days_recent / mid_points_recent if mid_points_recent > 0 else float('inf')
-                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
-                results_recent['低于中期阈值'] = (f"{avg_mid_thresh_cost_recent:.2f}", advantage_text, mid_points_recent, avg_interval_recent_text)
+                advantage_rate = ((avg_market_price_recent - avg_mid_thresh_cost_recent) / avg_market_price_recent) * 100 if avg_market_price_recent > 0 else 0
+                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_recent > 0 else "N/A (市场均价为0)"
+                avg_interval_recent = total_days_recent / mid_points_recent
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}"
+                # NEW: Calculate max interval if >= 2 points
+                if mid_points_recent >= 2:
+                    intervals = np.diff(mid_thresh_buys_recent.index)
+                    max_interval_recent = np.max(intervals)
+                    max_interval_recent_text = f"{max_interval_recent}"
+                # END NEW
+                results_recent['低于中期阈值'] = (f"{avg_mid_thresh_cost_recent:.2f}", advantage_text, mid_points_recent, avg_interval_recent_text, max_interval_recent_text) # NEW: Add max text
             else:
-                results_recent['低于中期阈值'] = ("N/A", "无触发", 0, "N/A")
+                results_recent['低于中期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
 
             # --- 4. 低于长期阈值 (Recent) ---
             long_thresh_buys_recent = df_recent[df_recent['工业指标'] < df_recent['基线阈值_长']]
             long_points_recent = len(long_thresh_buys_recent)
+            avg_interval_recent_text = "N/A"
+            max_interval_recent_text = "N/A" # NEW: Init max interval text
             if long_points_recent > 0:
                 avg_long_thresh_cost_recent = safe_float(long_thresh_buys_recent['Price'].mean())
-                if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_long_thresh_cost_recent) / avg_market_price_recent) * 100
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                avg_interval_recent = total_days_recent / long_points_recent if long_points_recent > 0 else float('inf')
-                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
-                results_recent['低于长期阈值'] = (f"{avg_long_thresh_cost_recent:.2f}", advantage_text, long_points_recent, avg_interval_recent_text)
+                advantage_rate = ((avg_market_price_recent - avg_long_thresh_cost_recent) / avg_market_price_recent) * 100 if avg_market_price_recent > 0 else 0
+                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_recent > 0 else "N/A (市场均价为0)"
+                avg_interval_recent = total_days_recent / long_points_recent
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}"
+                # NEW: Calculate max interval if >= 2 points
+                if long_points_recent >= 2:
+                    intervals = np.diff(long_thresh_buys_recent.index)
+                    max_interval_recent = np.max(intervals)
+                    max_interval_recent_text = f"{max_interval_recent}"
+                # END NEW
+                results_recent['低于长期阈值'] = (f"{avg_long_thresh_cost_recent:.2f}", advantage_text, long_points_recent, avg_interval_recent_text, max_interval_recent_text) # NEW: Add max text
             else:
-                results_recent['低于长期阈值'] = ("N/A", "无触发", 0, "N/A")
+                results_recent['低于长期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
 
             # 构建 HTML 表格 (Recent)
             recent_cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
-            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th title='计算: 在指定周期内，每次触发相应条件时买入的价格的算术平均值。'>近期平均采购成本 (CNY)</th><th title='计算: 周期总天数 / 触发次数。表示平均多少天触发一次采购条件。'>平均间隔天数</th><th>相对市场均价优势率</th></tr></thead><tbody>"
-            for name, (cost, adv_rate, points, interval_text) in results_recent.items():
+            # NEW: Update table header for interval column
+            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th title='计算: 在指定周期内，每次触发相应条件时买入的价格的算术平均值。'>近期平均采购成本 (CNY)</th><th title='计算: 周期总天数 / 触发次数 (平均值) | 两次触发之间的最大天数 (最大值)'>平均/最大间隔天数</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            # NEW: Unpack max_interval_text and format the interval cell
+            for name, (cost, adv_rate, points, avg_interval_text, max_interval_text) in results_recent.items():
                  adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
-                 recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td>{interval_text}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
+                 interval_display = f"{avg_interval_text} / {max_interval_text}" # Format avg/max
+                 recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td>{interval_display}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
+            # END NEW
             recent_cost_analysis_html += "</tbody></table>"
         else:
             recent_cost_analysis_html += f"<p><em>无法进行近期分析：缺少必要的列 ({', '.join(missing_cols_recent)})</em></p>"
@@ -1217,89 +1241,98 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
             # --- 1. 实际策略信号 ---
             strategy_purchases_full = df_analysis_scope[df_analysis_scope['采购信号']] # Use full scope df
             strategy_points = len(strategy_purchases_full)
+            avg_interval_text = "N/A"
+            max_interval_text = "N/A" # NEW: Init max interval text
             if strategy_points > 0:
                 avg_strategy_cost_full = safe_float(strategy_purchases_full['Price'].mean()) # Use full scope df
-                if avg_market_price_full > 0:
-                    advantage_rate = ((avg_market_price_full - avg_strategy_cost_full) / avg_market_price_full) * 100 # Use full market avg
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                # --- Calculate and add average interval --- 
-                avg_interval = total_days_in_scope / strategy_points if strategy_points > 0 else float('inf')
-                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
-                # --- Ensure interval_text is added to the results tuple --- 
-                results['实际策略信号'] = (f"{avg_strategy_cost_full:.2f}", advantage_text, strategy_points, avg_interval_text) 
+                advantage_rate = ((avg_market_price_full - avg_strategy_cost_full) / avg_market_price_full) * 100 if avg_market_price_full > 0 else 0
+                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_full > 0 else "N/A (市场均价为0)"
+                avg_interval = total_days_in_scope / strategy_points
+                avg_interval_text = f"{avg_interval:.1f}"
+                # NEW: Calculate max interval if >= 2 points
+                if strategy_points >= 2:
+                    intervals = np.diff(strategy_purchases_full.index)
+                    max_interval = np.max(intervals)
+                    max_interval_text = f"{max_interval}"
+                # END NEW
+                results['实际策略信号'] = (f"{avg_strategy_cost_full:.2f}", advantage_text, strategy_points, avg_interval_text, max_interval_text) # NEW: Add max text
             else:
-                # --- Ensure placeholder for interval_text is added --- 
-                results['实际策略信号'] = ("N/A", "无采购", 0, "N/A")
+                results['实际策略信号'] = ("N/A", "无采购", 0, "N/A", "N/A") # NEW: Add max text placeholder
+
 
             # --- 2. 低于短期阈值 ---
             short_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值_短']] # Use full scope df
             short_points = len(short_thresh_buys)
+            avg_interval_text = "N/A"
+            max_interval_text = "N/A" # NEW: Init max interval text
             if short_points > 0:
                 avg_short_thresh_cost = safe_float(short_thresh_buys['Price'].mean()) # Use full scope df
-                if avg_market_price_full > 0:
-                    advantage_rate = ((avg_market_price_full - avg_short_thresh_cost) / avg_market_price_full) * 100 # Use full market avg
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                # --- Calculate and add average interval --- 
-                avg_interval = total_days_in_scope / short_points if short_points > 0 else float('inf')
-                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
-                # --- Ensure interval_text is added to the results tuple --- 
-                results['低于短期阈值'] = (f"{avg_short_thresh_cost:.2f}", advantage_text, short_points, avg_interval_text)
+                advantage_rate = ((avg_market_price_full - avg_short_thresh_cost) / avg_market_price_full) * 100 if avg_market_price_full > 0 else 0
+                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_full > 0 else "N/A (市场均价为0)"
+                avg_interval = total_days_in_scope / short_points
+                avg_interval_text = f"{avg_interval:.1f}"
+                # NEW: Calculate max interval if >= 2 points
+                if short_points >= 2:
+                    intervals = np.diff(short_thresh_buys.index)
+                    max_interval = np.max(intervals)
+                    max_interval_text = f"{max_interval}"
+                # END NEW
+                results['低于短期阈值'] = (f"{avg_short_thresh_cost:.2f}", advantage_text, short_points, avg_interval_text, max_interval_text) # NEW: Add max text
             else:
-                # --- Ensure placeholder for interval_text is added --- 
-                 results['低于短期阈值'] = ("N/A", "无触发", 0, "N/A")
+                 results['低于短期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
 
             # --- 3. 低于中期阈值 ---
             mid_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值']] # Use full scope df
             mid_points = len(mid_thresh_buys)
+            avg_interval_text = "N/A"
+            max_interval_text = "N/A" # NEW: Init max interval text
             if mid_points > 0:
                 avg_mid_thresh_cost = safe_float(mid_thresh_buys['Price'].mean()) # Use full scope df
-                if avg_market_price_full > 0:
-                    advantage_rate = ((avg_market_price_full - avg_mid_thresh_cost) / avg_market_price_full) * 100 # Use full market avg
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                # --- Calculate and add average interval --- 
-                avg_interval = total_days_in_scope / mid_points if mid_points > 0 else float('inf')
-                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
-                # --- Ensure interval_text is added to the results tuple --- 
-                results['低于中期阈值'] = (f"{avg_mid_thresh_cost:.2f}", advantage_text, mid_points, avg_interval_text)
+                advantage_rate = ((avg_market_price_full - avg_mid_thresh_cost) / avg_market_price_full) * 100 if avg_market_price_full > 0 else 0
+                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_full > 0 else "N/A (市场均价为0)"
+                avg_interval = total_days_in_scope / mid_points
+                avg_interval_text = f"{avg_interval:.1f}"
+                # NEW: Calculate max interval if >= 2 points
+                if mid_points >= 2:
+                    intervals = np.diff(mid_thresh_buys.index)
+                    max_interval = np.max(intervals)
+                    max_interval_text = f"{max_interval}"
+                # END NEW
+                results['低于中期阈值'] = (f"{avg_mid_thresh_cost:.2f}", advantage_text, mid_points, avg_interval_text, max_interval_text) # NEW: Add max text
             else:
-                # --- Ensure placeholder for interval_text is added --- 
-                results['低于中期阈值'] = ("N/A", "无触发", 0, "N/A")
+                results['低于中期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
 
             # --- 4. 低于长期阈值 ---
             long_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值_长']] # Use full scope df
             long_points = len(long_thresh_buys)
+            avg_interval_text = "N/A"
+            max_interval_text = "N/A" # NEW: Init max interval text
             if long_points > 0:
                 avg_long_thresh_cost = safe_float(long_thresh_buys['Price'].mean()) # Use full scope df
-                if avg_market_price_full > 0:
-                    advantage_rate = ((avg_market_price_full - avg_long_thresh_cost) / avg_market_price_full) * 100 # Use full market avg
-                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
-                else:
-                    advantage_text = "N/A (市场均价为0)"
-                # --- Calculate and add average interval --- 
-                avg_interval = total_days_in_scope / long_points if long_points > 0 else float('inf')
-                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
-                # --- Ensure interval_text is added to the results tuple --- 
-                results['低于长期阈值'] = (f"{avg_long_thresh_cost:.2f}", advantage_text, long_points, avg_interval_text)
+                advantage_rate = ((avg_market_price_full - avg_long_thresh_cost) / avg_market_price_full) * 100 if avg_market_price_full > 0 else 0
+                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_full > 0 else "N/A (市场均价为0)"
+                avg_interval = total_days_in_scope / long_points
+                avg_interval_text = f"{avg_interval:.1f}"
+                # NEW: Calculate max interval if >= 2 points
+                if long_points >= 2:
+                    intervals = np.diff(long_thresh_buys.index)
+                    max_interval = np.max(intervals)
+                    max_interval_text = f"{max_interval}"
+                # END NEW
+                results['低于长期阈值'] = (f"{avg_long_thresh_cost:.2f}", advantage_text, long_points, avg_interval_text, max_interval_text) # NEW: Add max text
             else:
-                # --- Ensure placeholder for interval_text is added --- 
-                results['低于长期阈值'] = ("N/A", "无触发", 0, "N/A")
+                results['低于长期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
 
             # 构建 HTML 表格展示结果
             cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
-            # --- Add new column header for average interval and ensure correct unpacking--- 
-            cost_analysis_html += "<thead><tr><th>触发条件</th><th>总触发次数</th><th title='计算: 在整个数据周期内，每次触发相应条件时买入的价格的算术平均值。'>整体平均采购成本 (CNY)</th><th title='计算: 周期总天数 / 触发次数。表示平均多少天触发一次采购条件。'>平均间隔天数</th><th>相对市场均价优势率</th></tr></thead><tbody>"
-            # --- Updated loop to unpack interval --- 
-            for name, (cost, adv_rate, points, interval_text) in results.items():
-                 # 为优势率添加悬停解释
+            # NEW: Update table header for interval column
+            cost_analysis_html += "<thead><tr><th>触发条件</th><th>总触发次数</th><th title='计算: 在整个数据周期内，每次触发相应条件时买入的价格的算术平均值。'>整体平均采购成本 (CNY)</th><th title='计算: 周期总天数 / 触发次数 (平均值) | 两次触发之间的最大天数 (最大值)'>平均/最大间隔天数</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            # NEW: Unpack max_interval_text and format the interval cell
+            for name, (cost, adv_rate, points, avg_interval_text, max_interval_text) in results.items():
                  adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
-                 # --- Add interval_text to table row --- 
-                 cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td>{interval_text}</td><td title='{adv_title}'>{adv_rate}</td></tr>" 
+                 interval_display = f"{avg_interval_text} / {max_interval_text}" # Format avg/max
+                 cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td>{interval_display}</td><td title='{adv_title}'>{adv_rate}</td></tr>" 
+            # END NEW
             cost_analysis_html += "</tbody></table>"
 
         else:
