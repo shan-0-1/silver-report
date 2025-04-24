@@ -1192,6 +1192,102 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
     report_html += recent_cost_analysis_html
 
+    # +++ 全周期成本效益分析 +++
+    cost_analysis_html = "<h3>📊 全周期成本效益分析：</h3>" # Renamed variable
+
+    if not df.empty: # Check if df is not empty first
+        df_analysis_scope = df.copy() # Use a copy of the full dataframe
+
+        # 确保需要的列存在
+        required_cols_analysis = ['Price', '采购信号', '工业指标', '基线阈值_短', '基线阈值', '基线阈值_长'] # Renamed list
+        missing_cols_analysis = [col for col in required_cols_analysis if col not in df_analysis_scope.columns] # Renamed list
+
+        if not missing_cols_analysis:
+            # 计算全周期市场平均价格
+            avg_market_price_full = safe_float(df_analysis_scope['Price'].mean()) # Renamed variable
+
+            cost_analysis_html += f"<p>全周期市场平均价格: {avg_market_price_full:.2f} CNY</p>" # Updated text and variable
+            cost_analysis_html += "<ul style='list-style-type: none; padding-left: 0;'>"
+
+            results = {} # 存储不同策略的计算结果
+
+            # --- 1. 实际策略信号 ---
+            strategy_purchases_full = df_analysis_scope[df_analysis_scope['采购信号']] # Use full scope df
+            strategy_points = len(strategy_purchases_full)
+            if strategy_points > 0:
+                avg_strategy_cost_full = safe_float(strategy_purchases_full['Price'].mean()) # Use full scope df
+                if avg_market_price_full > 0:
+                    advantage_rate = ((avg_market_price_full - avg_strategy_cost_full) / avg_market_price_full) * 100 # Use full market avg
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                results['实际策略信号'] = (f"{avg_strategy_cost_full:.2f}", advantage_text, strategy_points) # Use full cost
+            else:
+                results['实际策略信号'] = ("N/A", "无采购", 0)
+
+            # --- 2. 低于短期阈值 ---
+            short_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值_短']] # Use full scope df
+            short_points = len(short_thresh_buys)
+            if short_points > 0:
+                avg_short_thresh_cost = safe_float(short_thresh_buys['Price'].mean()) # Use full scope df
+                if avg_market_price_full > 0:
+                    advantage_rate = ((avg_market_price_full - avg_short_thresh_cost) / avg_market_price_full) * 100 # Use full market avg
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                results['低于短期阈值'] = (f"{avg_short_thresh_cost:.2f}", advantage_text, short_points)
+            else:
+                 results['低于短期阈值'] = ("N/A", "无触发", 0)
+
+            # --- 3. 低于中期阈值 ---
+            mid_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值']] # Use full scope df
+            mid_points = len(mid_thresh_buys)
+            if mid_points > 0:
+                avg_mid_thresh_cost = safe_float(mid_thresh_buys['Price'].mean()) # Use full scope df
+                if avg_market_price_full > 0:
+                    advantage_rate = ((avg_market_price_full - avg_mid_thresh_cost) / avg_market_price_full) * 100 # Use full market avg
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                results['低于中期阈值'] = (f"{avg_mid_thresh_cost:.2f}", advantage_text, mid_points)
+            else:
+                results['低于中期阈值'] = ("N/A", "无触发", 0)
+
+            # --- 4. 低于长期阈值 ---
+            long_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值_长']] # Use full scope df
+            long_points = len(long_thresh_buys)
+            if long_points > 0:
+                avg_long_thresh_cost = safe_float(long_thresh_buys['Price'].mean()) # Use full scope df
+                if avg_market_price_full > 0:
+                    advantage_rate = ((avg_market_price_full - avg_long_thresh_cost) / avg_market_price_full) * 100 # Use full market avg
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                results['低于长期阈值'] = (f"{avg_long_thresh_cost:.2f}", advantage_text, long_points)
+            else:
+                results['低于长期阈值'] = ("N/A", "无触发", 0)
+
+            # 构建 HTML 表格展示结果
+            cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
+            # Updated table headers and title attribute
+            cost_analysis_html += "<thead><tr><th>触发条件</th><th>总触发次数</th><th title='计算: 在整个数据周期内，每次触发相应条件时买入的价格的算术平均值。\'>整体平均采购成本 (CNY)</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            for name, (cost, adv_rate, points) in results.items():
+                 # 为优势率添加悬停解释
+                 adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
+                 cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td title='{adv_title}'>{adv_rate}</td></tr>" # Use cost_analysis_html
+            cost_analysis_html += "</tbody></table>"
+
+        else:
+            cost_analysis_html += f"<p><em>无法进行分析：缺少必要的列 ({', '.join(missing_cols_analysis)})</em></p>" # Use renamed missing list
+    else:
+        cost_analysis_html += f"<p><em>数据似乎为空或过少 ({len(df)} 天)，无法进行成本效益分析。</em></p>" # Updated text for full period
+
+    cost_analysis_html += "</ul>" # 结束无序列表（虽然现在是表格）
+    # +++ 结束全周期分析 +++
+
+    # Ensure the main report_html uses the result from cost_analysis_html
+    report_html += cost_analysis_html
+
     report_html += "</div>" # Close main div
 
     # --- 计算用于动态分析的数据 --- 
