@@ -1205,8 +1205,10 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         if not missing_cols_analysis:
             # 计算全周期市场平均价格
             avg_market_price_full = safe_float(df_analysis_scope['Price'].mean()) # Renamed variable
+            # --- Ensure total_days_in_scope is defined here --- 
+            total_days_in_scope = len(df_analysis_scope)
 
-            cost_analysis_html += f"<p>全周期市场平均价格: {avg_market_price_full:.2f} CNY</p>" # Updated text and variable
+            cost_analysis_html += f"<p>全周期市场平均价格: {avg_market_price_full:.2f} CNY ({total_days_in_scope} 天)</p>" # Updated text and variable, added total days
             cost_analysis_html += "<ul style='list-style-type: none; padding-left: 0;'>"
 
             results = {} # 存储不同策略的计算结果
@@ -1221,9 +1223,14 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
                     advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
                 else:
                     advantage_text = "N/A (市场均价为0)"
-                results['实际策略信号'] = (f"{avg_strategy_cost_full:.2f}", advantage_text, strategy_points) # Use full cost
+                # --- Calculate and add average interval --- 
+                avg_interval = total_days_in_scope / strategy_points if strategy_points > 0 else float('inf')
+                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
+                # --- Ensure interval_text is added to the results tuple --- 
+                results['实际策略信号'] = (f"{avg_strategy_cost_full:.2f}", advantage_text, strategy_points, avg_interval_text) 
             else:
-                results['实际策略信号'] = ("N/A", "无采购", 0)
+                # --- Ensure placeholder for interval_text is added --- 
+                results['实际策略信号'] = ("N/A", "无采购", 0, "N/A")
 
             # --- 2. 低于短期阈值 ---
             short_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值_短']] # Use full scope df
@@ -1235,9 +1242,14 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
                     advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
                 else:
                     advantage_text = "N/A (市场均价为0)"
-                results['低于短期阈值'] = (f"{avg_short_thresh_cost:.2f}", advantage_text, short_points)
+                # --- Calculate and add average interval --- 
+                avg_interval = total_days_in_scope / short_points if short_points > 0 else float('inf')
+                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
+                # --- Ensure interval_text is added to the results tuple --- 
+                results['低于短期阈值'] = (f"{avg_short_thresh_cost:.2f}", advantage_text, short_points, avg_interval_text)
             else:
-                 results['低于短期阈值'] = ("N/A", "无触发", 0)
+                # --- Ensure placeholder for interval_text is added --- 
+                 results['低于短期阈值'] = ("N/A", "无触发", 0, "N/A")
 
             # --- 3. 低于中期阈值 ---
             mid_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值']] # Use full scope df
@@ -1249,9 +1261,14 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
                     advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
                 else:
                     advantage_text = "N/A (市场均价为0)"
-                results['低于中期阈值'] = (f"{avg_mid_thresh_cost:.2f}", advantage_text, mid_points)
+                # --- Calculate and add average interval --- 
+                avg_interval = total_days_in_scope / mid_points if mid_points > 0 else float('inf')
+                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
+                # --- Ensure interval_text is added to the results tuple --- 
+                results['低于中期阈值'] = (f"{avg_mid_thresh_cost:.2f}", advantage_text, mid_points, avg_interval_text)
             else:
-                results['低于中期阈值'] = ("N/A", "无触发", 0)
+                # --- Ensure placeholder for interval_text is added --- 
+                results['低于中期阈值'] = ("N/A", "无触发", 0, "N/A")
 
             # --- 4. 低于长期阈值 ---
             long_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值_长']] # Use full scope df
@@ -1263,18 +1280,25 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
                     advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
                 else:
                     advantage_text = "N/A (市场均价为0)"
-                results['低于长期阈值'] = (f"{avg_long_thresh_cost:.2f}", advantage_text, long_points)
+                # --- Calculate and add average interval --- 
+                avg_interval = total_days_in_scope / long_points if long_points > 0 else float('inf')
+                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
+                # --- Ensure interval_text is added to the results tuple --- 
+                results['低于长期阈值'] = (f"{avg_long_thresh_cost:.2f}", advantage_text, long_points, avg_interval_text)
             else:
-                results['低于长期阈值'] = ("N/A", "无触发", 0)
+                # --- Ensure placeholder for interval_text is added --- 
+                results['低于长期阈值'] = ("N/A", "无触发", 0, "N/A")
 
             # 构建 HTML 表格展示结果
             cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
-            # Updated table headers and title attribute
-            cost_analysis_html += "<thead><tr><th>触发条件</th><th>总触发次数</th><th title='计算: 在整个数据周期内，每次触发相应条件时买入的价格的算术平均值。\'>整体平均采购成本 (CNY)</th><th>相对市场均价优势率</th></tr></thead><tbody>"
-            for name, (cost, adv_rate, points) in results.items():
+            # --- Add new column header for average interval and ensure correct unpacking--- 
+            cost_analysis_html += "<thead><tr><th>触发条件</th><th>总触发次数</th><th title='计算: 在整个数据周期内，每次触发相应条件时买入的价格的算术平均值。'>整体平均采购成本 (CNY)</th><th title='计算: 周期总天数 / 触发次数。表示平均多少天触发一次采购条件。'>平均间隔天数</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            # --- Updated loop to unpack interval --- 
+            for name, (cost, adv_rate, points, interval_text) in results.items():
                  # 为优势率添加悬停解释
                  adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
-                 cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td title='{adv_title}'>{adv_rate}</td></tr>" # Use cost_analysis_html
+                 # --- Add interval_text to table row --- 
+                 cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td>{interval_text}</td><td title='{adv_title}'>{adv_rate}</td></tr>" 
             cost_analysis_html += "</tbody></table>"
 
         else:
