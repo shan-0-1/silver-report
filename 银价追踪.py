@@ -1852,7 +1852,7 @@ if __name__ == "__main__":
     df_main = load_silver_data()
 
     # --- 获取优化参数 (保持不变) ---
-    optimized_quantile = 0.2
+    optimized_quantile = 0.1
     optimized_rsi_threshold = 40
     print("\n将使用固定的指定参数生成最终报告：")
     print(f"  baseline_quantile: {optimized_quantile:.4f}")
