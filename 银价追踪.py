@@ -1317,7 +1317,7 @@ def create_visualization(df, optimized_rsi_threshold):
                         subplot_titles=(
                             # 修改标题以反映新标记
                             '价格与信号 (看红色三角/金叉绿色↑/死叉红色↓)', 
-                            '策略指标分析 (看蓝色线是否低于红色虚线/进入绿色区域)',
+                            '策略指标分析 (看蓝色线是否低于紫色虚线/进入绿色区域)',
                             # --- 修改：更新子图标题以反映动态RSI阈值 --- 
                             f'动量指标分析 (看紫色线是否低于红色点线 [RSI阈值={optimized_rsi_threshold}])'
                         ))
