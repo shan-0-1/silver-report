@@ -831,7 +831,7 @@ def peak_filter(df, upper_col='波动上轨', lower_col='波动下轨'): # <-- A
     # Ensure result is boolean Series
     return ~(peak_condition | overbought_atr).astype(bool)
 
-def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interval): # Add min_interval parameter
+def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     """
     生成包含详细解释和悬停提示的 HTML 格式分析报告。
     此报告旨在帮助用户（即使不熟悉金融交易）理解当前的白银市场状况以及策略的买入建议。
@@ -862,18 +862,6 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
 
 
     current = df.iloc[-1]
-
-    # --- Explicitly get the boolean value for the signal --- 
-    is_signal_today = False # Default to False
-    if '采购信号' in current:
-        try:
-            # Attempt to directly cast the value to bool
-            is_signal_today = bool(current['采购信号'])
-        except ValueError: 
-            # Handle cases where direct casting fails (e.g., unexpected type)
-            print(f"警告：无法将 current['采购信号'] ({current['采购信号']}) 直接转换为布尔值，默认为 False。")
-            is_signal_today = False
-    # --- End explicit boolean extraction --- 
 
     # --- 确保 current 中的值是有效的数字 ---
     def safe_float(value, default=0.0):
@@ -915,34 +903,25 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
     HOVER_TEXTS = {
         'price': "从数据源获取的每日收盘价。",
         'indicator': "计算思路: (价格/短期均线) * (价格/长期均线) * (1 - 动量因子)。综合衡量价格位置和波动性。",
-        # --- 修改：在描述中加入 quantile 参数 和 交易日 ---
-        'threshold': f"计算思路: 最近 {HISTORY_WINDOW} 交易日工业指标的 {optimized_quantile*100:.0f}% 分位数。是工业指标的动态买入参考线。",
+        # --- 修改：在描述中加入 quantile 参数 --- 
+        'threshold': f"计算思路: 最近 {HISTORY_WINDOW} 天工业指标的 {optimized_quantile*100:.0f}% 分位数。是工业指标的动态买入参考线。",
         'signal': "综合所有核心条件和阻断规则得出的最终建议。",
-        # --- 修改：天 -> 交易日 ---
-        'dynamic_window': f"计算思路: 基准窗口({BASE_WINDOW_SHORT}/{BASE_WINDOW_LONG}交易日)根据距离上次购买天数进行衰减({WINDOW_DECAY_RATE}率)，最短{MIN_WINDOW_SHORT}交易日。距离越久，窗口越短，越灵敏。",
+        'dynamic_window': f"计算思路: 基准窗口({BASE_WINDOW_SHORT}/{BASE_WINDOW_LONG}天)根据距离上次购买天数进行衰减({WINDOW_DECAY_RATE}率)，最短{MIN_WINDOW_SHORT}天。距离越久，窗口越短，越灵敏。",
         'price_trend': "计算思路: (当前价格 / 短期动态均线 - 1) * 100%。表示价格偏离近期平均成本的程度。",
-        # --- 修改：天 -> 交易日 ---
-        'volatility': f"计算思路: 最近 {int(current.get('动态短窗口', BASE_WINDOW_SHORT))} 交易日内每日价格变化百分比绝对值的平均值。此指标衡量价格波动的剧烈程度（即近期波动率），值越低表示市场越平静。注意：名称可能易误导，它主要反映波动性而非趋势动量。",
+        'volatility': f"计算思路: 最近 {int(current.get('动态短窗口', BASE_WINDOW_SHORT))} 天内每日价格变化百分比绝对值的平均值。此指标衡量价格波动的剧烈程度（即近期波动率），值越低表示市场越平静。注意：名称可能易误导，它主要反映波动性而非趋势动量。",
         'core_cond1': f"工业指标 ({indicator:.2f}) 是否低于基线阈值 ({threshold:.2f})？",
         # --- 修改：在描述中加入 rsi 参数 --- 
         'core_cond2': f"修正RSI ({rsi:.1f}) 是否低于 {optimized_rsi_threshold}？RSI通过计算一定时期内上涨日和下跌日的平均涨跌幅得到，衡量买卖力量对比，低于此值表示可能超卖（下跌过度）。",
         'core_cond3': f"当前价格 ({price:.2f}) 是否低于 EMA21 ({ema21:.2f})？EMA是指数移动平均线，给予近期价格更高权重。",
         'core_cond4': f"当前价格 ({price:.2f}) 是否低于布林下轨 ({lower_band:.2f}) 的 1.05 倍 ({lower_band * 1.05:.2f})？布林通道基于移动平均线加减标准差得到，衡量价格相对波动范围。",
         'core_cond5': f"EMA9/EMA21比率 ({ema_ratio:.3f}) 是否大于动态阈值 ({dynamic_threshold:.3f})？该阈值会根据波动性调整。",
-        # --- 修改：日 -> 交易日 ---
-        'core_cond6': f"波动率因子 ({volatility:.3f}) 是否低于其动态阈值 ({vol_threshold:.3f})？该阈值是波动率因子自身的45交易日35%分位数。",
+        'core_cond6': f"波动率因子 ({volatility:.3f}) 是否低于其动态阈值 ({vol_threshold:.3f})？该阈值是波动率因子自身的45日35%分位数。",
         'cond_score': f"满足以上6个核心条件的数量（部分条件阈值可能已优化），至少需要满足4个才能初步考虑买入。", # 更新提示
-        # --- 修改：日 -> 交易日 ---
-        'peak_filter': f"一个内部过滤器，检查近3交易日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨80%以上位置（可能短期过热），用于排除一些潜在的顶部信号。",
-        # --- 修改：天 -> 交易日 ---
-        'window_decay': "显示当前动态短窗口相比基准窗口缩短了多少交易日，反映了衰减机制的效果。",
+        'peak_filter': f"一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨80%以上位置（可能短期过热），用于排除一些潜在的顶部信号。",
+        'window_decay': "显示当前动态短窗口相比基准窗口缩短了多少天，反映了衰减机制的效果。",
         'ema_trend': f"基于EMA9, EMA21, EMA50的相对位置判断短期趋势。状态为1代表上涨趋势，-1代表下跌趋势。", # Modified explanation
         'final_block': "总结导致最终未能产生买入信号的具体原因。",
-        # --- 修改：三日 -> 三交易日 ---
         '3day_change': "最近三个交易日的价格变化绝对值和方向。",
-        # --- NEW: Add hover text for interval check --- 
-        'interval_check': f"策略要求两次有效采购信号之间至少间隔 {min_interval} 个交易日。",
-        # --- End NEW --- 
         'ema_crossover': "基于 EMA9 和 EMA21 的直接相对位置。金叉状态 (EMA9 > EMA21) 通常视为看涨倾向，死叉状态 (EMA9 < EMA21) 通常视为看跌倾向。图表上的标记 (↑/↓) 显示精确的交叉点。" # Explanation for EMA crossover
     }
 
@@ -955,8 +934,8 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
         <p><strong title='{HOVER_TEXTS['price']}'>当前价格：</strong>{price:.2f} CNY</p>
         <p><strong title='{HOVER_TEXTS['indicator']}'>核心指标（工业指标）：</strong>{indicator:.2f} <span title='{HOVER_TEXTS['threshold']}'>（买入参考阈值：低于 {threshold:.2f}）</span></p>
 
-        # --- Use the explicitly extracted boolean variable --- 
-        <h3 title='{HOVER_TEXTS['signal']}'>🛒 今日建议：{'<span style="color:green; font-weight:bold;">立即采购</span>' if is_signal_today else '<span style="color:orange; font-weight:bold;">持币观望</span>'}</h3>
+
+        <h3 title='{HOVER_TEXTS['signal']}'>🛒 今日建议：{'<span style="color:green; font-weight:bold;">立即采购</span>' if current['采购信号'] else '<span style="color:orange; font-weight:bold;">持币观望</span>'}</h3>
         <p><em>（此建议基于以下综合分析，需至少满足4个核心条件且无阻断信号）</em></p>
 
         <h3>策略状态：</h3>
@@ -1023,29 +1002,6 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
         report_html += f'<li style="margin-bottom: 5px;" title="{title_attr}"><span style="color: {status_color}; margin-right: 5px;">{status_icon}</span> {i}. {desc[0]}：{desc[1]}</li>'
     report_html += "</ul>"
 
-    # --- RE-INSERT Calculation for days since last actual signal ---
-    df_report_copy_interval = df.copy() # Use the df passed to the function
-    # Ensure '采购信号' column exists and is boolean
-    if '采购信号' not in df_report_copy_interval.columns:
-        df_report_copy_interval['采购信号'] = False # Add if missing and set all to False
-    else:
-        # Ensure the column is boolean, fill NaNs with False first
-        if not pd.api.types.is_bool_dtype(df_report_copy_interval['采购信号']):
-            # Try a more direct conversion, handling potential NaNs
-            try:
-                # Fill NA with False, then convert to bool
-                df_report_copy_interval['采购信号'] = df_report_copy_interval['采购信号'].fillna(False).astype(bool)
-            except Exception as e:
-                 print(f"警告：尝试转换 '采购信号' 列为布尔值失败: {e}. 将使用全 False 列。")
-                 df_report_copy_interval['采购信号'] = False # Fallback to all False if conversion fails
-
-    # Now the column should definitely be boolean (or all False)
-    actual_signals = df_report_copy_interval[df_report_copy_interval['采购信号']] # This filter requires a boolean Series
-    last_actual_signal_index = actual_signals.index[-1] if not actual_signals.empty else -1
-    current_index = df_report_copy_interval.index[-1]
-    days_since_last_actual_signal = (current_index - last_actual_signal_index) if last_actual_signal_index != -1 else 9999 # Large number if no prior signal
-    # --- End RE-INSERT ---
-
     report_html += "<h3>🔍 信号阻断分析（即使满足4个以上条件，以下情况也会阻止买入）：</h3><ul>"
 
     condition_scores = sum([current.get(f'core_cond{i}_met', False) for i in range(1, 7)])
@@ -1085,19 +1041,20 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
     atr_value = ((price - atr_lower) / atr_denominator) * 100 if atr_denominator != 0 else 50.0
     atr_overbought = atr_value > 80
     # 简化 title 属性的引号
-    report_html += f"<li title='一个内部过滤器，检查近3交易日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：{peak_status_text} | ATR通道位置 {atr_value:.1f}%</li>"
+    report_html += f"<li title='一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：{peak_status_text} | ATR通道位置 {atr_value:.1f}%</li>"
 
-    # --- Re-add Interval Check --- 
-    # interval_ok = days_since_last_actual_signal >= min_interval # Check against last *actual* signal
-    # interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (距上次信号{days_since_last_actual_signal}交易日, 需≥{min_interval})</span>'
-    # report_html += f"<li title='{HOVER_TEXTS['interval_check'].replace('"' , '&quot;')}'>采购间隔检查：{interval_check_text}</li>"
-    # --- 修改：间隔检查显示当前状态，而非是否满足未来信号 --- 
-    report_html += f"<li title='{HOVER_TEXTS['interval_check'].replace('"' , '&quot;')}'>采购间隔状态：距离上次信号 {days_since_last_actual_signal if days_since_last_actual_signal < 9999 else 'N/A'} 交易日 (要求 ≥ {min_interval})</li>"
-    # --- 结束修改 ---
+    # --- Ensure Interval Check Display and Calculation is Fully Removed --- 
+    # last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
+    # interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
+    # The following line caused the NameError, ensure it's removed/commented:
+    # interval_ok = interval_days >= MIN_PURCHASE_INTERVAL 
+    # interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (还需等待 {MIN_PURCHASE_INTERVAL - interval_days}天)</span>'
+    # report_html += f"<li title='...'>采购间隔：...</li>" # Ensure the display line is also removed/commented
+    # --- End Interval Check Removal ---
 
     window_effect = BASE_WINDOW_SHORT - int(current.get('动态短窗口', BASE_WINDOW_SHORT))
     # 简化 title 属性的引号
-    report_html += f"<li title='{HOVER_TEXTS['window_decay'].replace('\"','&quot;')}'>窗口衰减效果：当前短窗口比基准小 {window_effect}交易日 (基准{BASE_WINDOW_SHORT} → 当前{int(current.get('动态短窗口', BASE_WINDOW_SHORT))})</li>" # 确保是整数
+    report_html += f"<li title='{HOVER_TEXTS['window_decay'].replace('\"','&quot;')}'>窗口衰减效果：当前短窗口比基准小 {window_effect}天 (基准{BASE_WINDOW_SHORT} → 当前{int(current.get('动态短窗口', BASE_WINDOW_SHORT))})</li>" # 确保是整数
 
     ema_trend_val = current.get('EMA趋势', 0)
     ema_trend_text = '<span style="color:green;">上涨趋势</span>' if ema_trend_val == 1 else '<span style="color:red;">下跌趋势</span>' if ema_trend_val == -1 else "震荡"
@@ -1112,30 +1069,11 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
     else:
         block_reasons = []
         if not base_req_met: block_reasons.append("核心条件不足 (未满足≥4项)")
-        
-        # --- Add interval blocking reason check --- 
-        # Ensure 'blocked_by_interval' column exists, default to False if not
-        was_blocked_by_interval = current.get('blocked_by_interval', False)
-        
-        # Convert non-boolean to boolean, filling NaN with False
-        # --- Simpler and safer conversion to Python bool --- 
-        try:
-            # Directly cast to standard Python bool
-            was_blocked_by_interval = bool(was_blocked_by_interval)
-        except Exception:
-             # If casting somehow fails, default to False
-             print(f"警告：无法将 was_blocked_by_interval ({was_blocked_by_interval}) 转换为布尔值，默认为 False。")
-             was_blocked_by_interval = False
-        # --- End simpler conversion ---
-            
-        # Check if the *reason* for no signal today was the interval
-        if not current['采购信号'] and was_blocked_by_interval:
-             block_reasons.append(f"采购间隔限制 (距上次{days_since_last_actual_signal}交易日, 需≥{min_interval})") # Use passed min_interval
-        # --- End interval check --- 
-        
+        # --- Ensure Interval Reason is Fully Removed --- 
+        # if not interval_ok: block_reasons.append(f"采购间隔限制 (还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)") 
+        # --- End Interval Reason Removal --- 
         if not peak_filter_passed: block_reasons.append("价格形态不利")
         if atr_overbought: block_reasons.append("ATR通道超买 (>80%)")
-        
         reason_str = ' + '.join(block_reasons) if block_reasons else '核心条件未完全满足或其它因素'
         # 简化 title 属性的引号
         report_html += f"<h3 title='{HOVER_TEXTS['final_block'].replace('\"','&quot;')}'>⛔ 最终阻断原因：<span style='color:red;'>{reason_str}</span></h3>"
@@ -1149,19 +1087,18 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
         three_day_diff = price - three_day_ago_price
         # 简化 title 属性的引号
         report_html += f"""
-        <h3 title='{HOVER_TEXTS['3day_change'].replace('\"','&quot;')}'>📉 三交易日价格变化参考：</h3>
+        <h3 title='{HOVER_TEXTS['3day_change'].replace('\"','&quot;')}'>📉 三日价格变化参考：</h3>
         <ul>
             <li>三日前 ({three_day_ago_date}) 价格：{three_day_ago_price:.2f}</li>
    
-            <li>三交易日价格变动：<span style="color:{'green' if three_day_diff >= 0 else 'red'};">{ '+' if three_day_diff >= 0 else ''}{three_day_diff:.2f}</span></li>
+            <li>三日价格变动：<span style="color:{'green' if three_day_diff >= 0 else 'red'};">{'+' if three_day_diff >= 0 else ''}{three_day_diff:.2f}</span></li>
         </ul>"""
     else:
-         report_html += "<h3>📉 三交易日价格变化参考：数据不足</h3>"
+         report_html += "<h3>📉 三日价格变化参考：数据不足</h3>"
 
     # --- Re-introduce Recent (252 days) Cost-Benefit Analysis --- 
     N_DAYS_RECENT = 252
-    # --- 修改：天 -> 交易日 ---
-    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}交易日) 成本效益分析：</h3>" 
+    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析：</h3>" 
 
     if len(df) >= N_DAYS_RECENT:
         df_recent = df.iloc[-N_DAYS_RECENT:].copy() # 获取最近 N 天数据副本
@@ -1171,112 +1108,85 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
         if not missing_cols_recent:
             avg_market_price_recent = safe_float(df_recent['Price'].mean())
             total_days_recent = N_DAYS_RECENT
-            # --- 修改：天 -> 交易日 ---
-            recent_cost_analysis_html += f"<p>同期市场平均价格: {avg_market_price_recent:.2f} CNY ({total_days_recent} 交易日)</p>"
+            recent_cost_analysis_html += f"<p>同期市场平均价格: {avg_market_price_recent:.2f} CNY ({total_days_recent} 天)</p>"
             recent_cost_analysis_html += "<ul style='list-style-type: none; padding-left: 0;'>"
             results_recent = {}
 
             # --- 1. 实际策略信号 (Recent) ---
             strategy_purchases_recent = df_recent[df_recent['采购信号']]
             strategy_points_recent = len(strategy_purchases_recent)
-            avg_interval_recent_text = "N/A"
-            max_interval_recent_text = "N/A" # NEW: Init max interval text
             if strategy_points_recent > 0:
                 avg_strategy_cost_recent = safe_float(strategy_purchases_recent['Price'].mean())
-                advantage_rate = ((avg_market_price_recent - avg_strategy_cost_recent) / avg_market_price_recent) * 100 if avg_market_price_recent > 0 else 0
-                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_recent > 0 else "N/A (市场均价为0)"
-                avg_interval_recent = total_days_recent / strategy_points_recent
-                avg_interval_recent_text = f"{avg_interval_recent:.1f}"
-                # NEW: Calculate max interval if >= 2 points
-                if strategy_points_recent >= 2:
-                    intervals = np.diff(strategy_purchases_recent.index)
-                    max_interval_recent = np.max(intervals)
-                    max_interval_recent_text = f"{max_interval_recent}"
-                # END NEW
-                results_recent['实际策略信号'] = (f"{avg_strategy_cost_recent:.2f}", advantage_text, strategy_points_recent, avg_interval_recent_text, max_interval_recent_text) # NEW: Add max text
+                if avg_market_price_recent > 0:
+                    advantage_rate = ((avg_market_price_recent - avg_strategy_cost_recent) / avg_market_price_recent) * 100
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                avg_interval_recent = total_days_recent / strategy_points_recent if strategy_points_recent > 0 else float('inf')
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
+                results_recent['实际策略信号'] = (f"{avg_strategy_cost_recent:.2f}", advantage_text, strategy_points_recent, avg_interval_recent_text)
             else:
-                results_recent['实际策略信号'] = ("N/A", "无采购", 0, "N/A", "N/A") # NEW: Add max text placeholder
+                results_recent['实际策略信号'] = ("N/A", "无采购", 0, "N/A")
 
             # --- 2. 低于短期阈值 (Recent) ---
             short_thresh_buys_recent = df_recent[df_recent['工业指标'] < df_recent['基线阈值_短']]
             short_points_recent = len(short_thresh_buys_recent)
-            avg_interval_recent_text = "N/A"
-            max_interval_recent_text = "N/A" # NEW: Init max interval text
             if short_points_recent > 0:
                 avg_short_thresh_cost_recent = safe_float(short_thresh_buys_recent['Price'].mean())
-                advantage_rate = ((avg_market_price_recent - avg_short_thresh_cost_recent) / avg_market_price_recent) * 100 if avg_market_price_recent > 0 else 0
-                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_recent > 0 else "N/A (市场均价为0)"
-                avg_interval_recent = total_days_recent / short_points_recent
-                avg_interval_recent_text = f"{avg_interval_recent:.1f}"
-                # NEW: Calculate max interval if >= 2 points
-                if short_points_recent >= 2:
-                    intervals = np.diff(short_thresh_buys_recent.index)
-                    max_interval_recent = np.max(intervals)
-                    max_interval_recent_text = f"{max_interval_recent}"
-                # END NEW
-                results_recent['低于短期阈值'] = (f"{avg_short_thresh_cost_recent:.2f}", advantage_text, short_points_recent, avg_interval_recent_text, max_interval_recent_text) # NEW: Add max text
+                if avg_market_price_recent > 0:
+                    advantage_rate = ((avg_market_price_recent - avg_short_thresh_cost_recent) / avg_market_price_recent) * 100
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                avg_interval_recent = total_days_recent / short_points_recent if short_points_recent > 0 else float('inf')
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
+                results_recent['低于短期阈值'] = (f"{avg_short_thresh_cost_recent:.2f}", advantage_text, short_points_recent, avg_interval_recent_text)
             else:
-                results_recent['低于短期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
+                results_recent['低于短期阈值'] = ("N/A", "无触发", 0, "N/A")
 
             # --- 3. 低于中期阈值 (Recent) ---
             mid_thresh_buys_recent = df_recent[df_recent['工业指标'] < df_recent['基线阈值']]
             mid_points_recent = len(mid_thresh_buys_recent)
-            avg_interval_recent_text = "N/A"
-            max_interval_recent_text = "N/A" # NEW: Init max interval text
             if mid_points_recent > 0:
                 avg_mid_thresh_cost_recent = safe_float(mid_thresh_buys_recent['Price'].mean())
-                advantage_rate = ((avg_market_price_recent - avg_mid_thresh_cost_recent) / avg_market_price_recent) * 100 if avg_market_price_recent > 0 else 0
-                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_recent > 0 else "N/A (市场均价为0)"
-                avg_interval_recent = total_days_recent / mid_points_recent
-                avg_interval_recent_text = f"{avg_interval_recent:.1f}"
-                # NEW: Calculate max interval if >= 2 points
-                if mid_points_recent >= 2:
-                    intervals = np.diff(mid_thresh_buys_recent.index)
-                    max_interval_recent = np.max(intervals)
-                    max_interval_recent_text = f"{max_interval_recent}"
-                # END NEW
-                results_recent['低于中期阈值'] = (f"{avg_mid_thresh_cost_recent:.2f}", advantage_text, mid_points_recent, avg_interval_recent_text, max_interval_recent_text) # NEW: Add max text
+                if avg_market_price_recent > 0:
+                    advantage_rate = ((avg_market_price_recent - avg_mid_thresh_cost_recent) / avg_market_price_recent) * 100
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                avg_interval_recent = total_days_recent / mid_points_recent if mid_points_recent > 0 else float('inf')
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
+                results_recent['低于中期阈值'] = (f"{avg_mid_thresh_cost_recent:.2f}", advantage_text, mid_points_recent, avg_interval_recent_text)
             else:
-                results_recent['低于中期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
+                results_recent['低于中期阈值'] = ("N/A", "无触发", 0, "N/A")
 
             # --- 4. 低于长期阈值 (Recent) ---
             long_thresh_buys_recent = df_recent[df_recent['工业指标'] < df_recent['基线阈值_长']]
             long_points_recent = len(long_thresh_buys_recent)
-            avg_interval_recent_text = "N/A"
-            max_interval_recent_text = "N/A" # NEW: Init max interval text
             if long_points_recent > 0:
                 avg_long_thresh_cost_recent = safe_float(long_thresh_buys_recent['Price'].mean())
-                advantage_rate = ((avg_market_price_recent - avg_long_thresh_cost_recent) / avg_market_price_recent) * 100 if avg_market_price_recent > 0 else 0
-                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_recent > 0 else "N/A (市场均价为0)"
-                avg_interval_recent = total_days_recent / long_points_recent
-                avg_interval_recent_text = f"{avg_interval_recent:.1f}"
-                # NEW: Calculate max interval if >= 2 points
-                if long_points_recent >= 2:
-                    intervals = np.diff(long_thresh_buys_recent.index)
-                    max_interval_recent = np.max(intervals)
-                    max_interval_recent_text = f"{max_interval_recent}"
-                # END NEW
-                results_recent['低于长期阈值'] = (f"{avg_long_thresh_cost_recent:.2f}", advantage_text, long_points_recent, avg_interval_recent_text, max_interval_recent_text) # NEW: Add max text
+                if avg_market_price_recent > 0:
+                    advantage_rate = ((avg_market_price_recent - avg_long_thresh_cost_recent) / avg_market_price_recent) * 100
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                avg_interval_recent = total_days_recent / long_points_recent if long_points_recent > 0 else float('inf')
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
+                results_recent['低于长期阈值'] = (f"{avg_long_thresh_cost_recent:.2f}", advantage_text, long_points_recent, avg_interval_recent_text)
             else:
-                results_recent['低于长期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
+                results_recent['低于长期阈值'] = ("N/A", "无触发", 0, "N/A")
 
             # 构建 HTML 表格 (Recent)
             recent_cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
-            # NEW: Update table header for interval column
-            # --- 修改：天数 -> 交易日数, 天 -> 交易日 ---
-            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th title='计算: 在指定周期内，每次触发相应条件时买入的价格的算术平均值。'>近期平均采购成本 (CNY)</th><th title='计算: 周期总交易日数 / 触发次数 (平均值) | 两次触发之间的最大交易日数 (最大值)'>平均/最大间隔交易日</th><th>相对市场均价优势率</th></tr></thead><tbody>"
-            # NEW: Unpack max_interval_text and format the interval cell
-            for name, (cost, adv_rate, points, avg_interval_text, max_interval_text) in results_recent.items():
+            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th title='计算: 在指定周期内，每次触发相应条件时买入的价格的算术平均值。'>近期平均采购成本 (CNY)</th><th title='计算: 周期总天数 / 触发次数。表示平均多少天触发一次采购条件。'>平均间隔天数</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            for name, (cost, adv_rate, points, interval_text) in results_recent.items():
                  adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
-                 interval_display = f"{avg_interval_text} / {max_interval_text}" # Format avg/max
-                 recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td>{interval_display}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
-            # END NEW
+                 recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td>{interval_text}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
             recent_cost_analysis_html += "</tbody></table>"
         else:
             recent_cost_analysis_html += f"<p><em>无法进行近期分析：缺少必要的列 ({', '.join(missing_cols_recent)})</em></p>"
     else:
-        # --- 修改：天 -> 交易日 ---
-        recent_cost_analysis_html += f"<p><em>数据不足 ({len(df)} 交易日)，无法进行 {N_DAYS_RECENT} 交易日成本效益分析。</em></p>"
+        recent_cost_analysis_html += f"<p><em>数据不足 ({len(df)} 天)，无法进行 {N_DAYS_RECENT} 天成本效益分析。</em></p>"
     recent_cost_analysis_html += "</ul>"
     # --- End Re-introduced Recent Analysis ---
 
@@ -1299,8 +1209,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
             # --- Ensure total_days_in_scope is defined here --- 
             total_days_in_scope = len(df_analysis_scope)
 
-            # --- 修改：天 -> 交易日 ---
-            cost_analysis_html += f"<p>全周期市场平均价格: {avg_market_price_full:.2f} CNY ({total_days_in_scope} 交易日)</p>" # Updated text and variable, added total days
+            cost_analysis_html += f"<p>全周期市场平均价格: {avg_market_price_full:.2f} CNY ({total_days_in_scope} 天)</p>" # Updated text and variable, added total days
             cost_analysis_html += "<ul style='list-style-type: none; padding-left: 0;'>"
 
             results = {} # 存储不同策略的计算结果
@@ -1308,106 +1217,95 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
             # --- 1. 实际策略信号 ---
             strategy_purchases_full = df_analysis_scope[df_analysis_scope['采购信号']] # Use full scope df
             strategy_points = len(strategy_purchases_full)
-            avg_interval_text = "N/A"
-            max_interval_text = "N/A" # NEW: Init max interval text
             if strategy_points > 0:
                 avg_strategy_cost_full = safe_float(strategy_purchases_full['Price'].mean()) # Use full scope df
-                advantage_rate = ((avg_market_price_full - avg_strategy_cost_full) / avg_market_price_full) * 100 if avg_market_price_full > 0 else 0
-                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_full > 0 else "N/A (市场均价为0)"
-                avg_interval = total_days_in_scope / strategy_points
-                avg_interval_text = f"{avg_interval:.1f}"
-                # NEW: Calculate max interval if >= 2 points
-                if strategy_points >= 2:
-                    intervals = np.diff(strategy_purchases_full.index)
-                    max_interval = np.max(intervals)
-                    max_interval_text = f"{max_interval}"
-                # END NEW
-                results['实际策略信号'] = (f"{avg_strategy_cost_full:.2f}", advantage_text, strategy_points, avg_interval_text, max_interval_text) # NEW: Add max text
+                if avg_market_price_full > 0:
+                    advantage_rate = ((avg_market_price_full - avg_strategy_cost_full) / avg_market_price_full) * 100 # Use full market avg
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                # --- Calculate and add average interval --- 
+                avg_interval = total_days_in_scope / strategy_points if strategy_points > 0 else float('inf')
+                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
+                # --- Ensure interval_text is added to the results tuple --- 
+                results['实际策略信号'] = (f"{avg_strategy_cost_full:.2f}", advantage_text, strategy_points, avg_interval_text) 
             else:
-                results['实际策略信号'] = ("N/A", "无采购", 0, "N/A", "N/A") # NEW: Add max text placeholder
-
+                # --- Ensure placeholder for interval_text is added --- 
+                results['实际策略信号'] = ("N/A", "无采购", 0, "N/A")
 
             # --- 2. 低于短期阈值 ---
             short_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值_短']] # Use full scope df
             short_points = len(short_thresh_buys)
-            avg_interval_text = "N/A"
-            max_interval_text = "N/A" # NEW: Init max interval text
             if short_points > 0:
                 avg_short_thresh_cost = safe_float(short_thresh_buys['Price'].mean()) # Use full scope df
-                advantage_rate = ((avg_market_price_full - avg_short_thresh_cost) / avg_market_price_full) * 100 if avg_market_price_full > 0 else 0
-                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_full > 0 else "N/A (市场均价为0)"
-                avg_interval = total_days_in_scope / short_points
-                avg_interval_text = f"{avg_interval:.1f}"
-                # NEW: Calculate max interval if >= 2 points
-                if short_points >= 2:
-                    intervals = np.diff(short_thresh_buys.index)
-                    max_interval = np.max(intervals)
-                    max_interval_text = f"{max_interval}"
-                # END NEW
-                results['低于短期阈值'] = (f"{avg_short_thresh_cost:.2f}", advantage_text, short_points, avg_interval_text, max_interval_text) # NEW: Add max text
+                if avg_market_price_full > 0:
+                    advantage_rate = ((avg_market_price_full - avg_short_thresh_cost) / avg_market_price_full) * 100 # Use full market avg
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                # --- Calculate and add average interval --- 
+                avg_interval = total_days_in_scope / short_points if short_points > 0 else float('inf')
+                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
+                # --- Ensure interval_text is added to the results tuple --- 
+                results['低于短期阈值'] = (f"{avg_short_thresh_cost:.2f}", advantage_text, short_points, avg_interval_text)
             else:
-                 results['低于短期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
+                # --- Ensure placeholder for interval_text is added --- 
+                 results['低于短期阈值'] = ("N/A", "无触发", 0, "N/A")
 
             # --- 3. 低于中期阈值 ---
             mid_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值']] # Use full scope df
             mid_points = len(mid_thresh_buys)
-            avg_interval_text = "N/A"
-            max_interval_text = "N/A" # NEW: Init max interval text
             if mid_points > 0:
                 avg_mid_thresh_cost = safe_float(mid_thresh_buys['Price'].mean()) # Use full scope df
-                advantage_rate = ((avg_market_price_full - avg_mid_thresh_cost) / avg_market_price_full) * 100 if avg_market_price_full > 0 else 0
-                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_full > 0 else "N/A (市场均价为0)"
-                avg_interval = total_days_in_scope / mid_points
-                avg_interval_text = f"{avg_interval:.1f}"
-                # NEW: Calculate max interval if >= 2 points
-                if mid_points >= 2:
-                    intervals = np.diff(mid_thresh_buys.index)
-                    max_interval = np.max(intervals)
-                    max_interval_text = f"{max_interval}"
-                # END NEW
-                results['低于中期阈值'] = (f"{avg_mid_thresh_cost:.2f}", advantage_text, mid_points, avg_interval_text, max_interval_text) # NEW: Add max text
+                if avg_market_price_full > 0:
+                    advantage_rate = ((avg_market_price_full - avg_mid_thresh_cost) / avg_market_price_full) * 100 # Use full market avg
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                # --- Calculate and add average interval --- 
+                avg_interval = total_days_in_scope / mid_points if mid_points > 0 else float('inf')
+                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
+                # --- Ensure interval_text is added to the results tuple --- 
+                results['低于中期阈值'] = (f"{avg_mid_thresh_cost:.2f}", advantage_text, mid_points, avg_interval_text)
             else:
-                results['低于中期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
+                # --- Ensure placeholder for interval_text is added --- 
+                results['低于中期阈值'] = ("N/A", "无触发", 0, "N/A")
 
             # --- 4. 低于长期阈值 ---
             long_thresh_buys = df_analysis_scope[df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值_长']] # Use full scope df
             long_points = len(long_thresh_buys)
-            avg_interval_text = "N/A"
-            max_interval_text = "N/A" # NEW: Init max interval text
             if long_points > 0:
                 avg_long_thresh_cost = safe_float(long_thresh_buys['Price'].mean()) # Use full scope df
-                advantage_rate = ((avg_market_price_full - avg_long_thresh_cost) / avg_market_price_full) * 100 if avg_market_price_full > 0 else 0
-                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_full > 0 else "N/A (市场均价为0)"
-                avg_interval = total_days_in_scope / long_points
-                avg_interval_text = f"{avg_interval:.1f}"
-                # NEW: Calculate max interval if >= 2 points
-                if long_points >= 2:
-                    intervals = np.diff(long_thresh_buys.index)
-                    max_interval = np.max(intervals)
-                    max_interval_text = f"{max_interval}"
-                # END NEW
-                results['低于长期阈值'] = (f"{avg_long_thresh_cost:.2f}", advantage_text, long_points, avg_interval_text, max_interval_text) # NEW: Add max text
+                if avg_market_price_full > 0:
+                    advantage_rate = ((avg_market_price_full - avg_long_thresh_cost) / avg_market_price_full) * 100 # Use full market avg
+                    advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
+                else:
+                    advantage_text = "N/A (市场均价为0)"
+                # --- Calculate and add average interval --- 
+                avg_interval = total_days_in_scope / long_points if long_points > 0 else float('inf')
+                avg_interval_text = f"{avg_interval:.1f}" if avg_interval != float('inf') else "N/A"
+                # --- Ensure interval_text is added to the results tuple --- 
+                results['低于长期阈值'] = (f"{avg_long_thresh_cost:.2f}", advantage_text, long_points, avg_interval_text)
             else:
-                results['低于长期阈值'] = ("N/A", "无触发", 0, "N/A", "N/A") # NEW: Add max text placeholder
+                # --- Ensure placeholder for interval_text is added --- 
+                results['低于长期阈值'] = ("N/A", "无触发", 0, "N/A")
 
             # 构建 HTML 表格展示结果
             cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
-            # NEW: Update table header for interval column
-            # --- 修改：天数 -> 交易日数, 天 -> 交易日 ---
-            cost_analysis_html += "<thead><tr><th>触发条件</th><th>总触发次数</th><th title='计算: 在整个数据周期内，每次触发相应条件时买入的价格的算术平均值。'>整体平均采购成本 (CNY)</th><th title='计算: 周期总交易日数 / 触发次数 (平均值) | 两次触发之间的最大交易日数 (最大值)'>平均/最大间隔交易日</th><th>相对市场均价优势率</th></tr></thead><tbody>"
-            # NEW: Unpack max_interval_text and format the interval cell
-            for name, (cost, adv_rate, points, avg_interval_text, max_interval_text) in results.items():
+            # --- Add new column header for average interval and ensure correct unpacking--- 
+            cost_analysis_html += "<thead><tr><th>触发条件</th><th>总触发次数</th><th title='计算: 在整个数据周期内，每次触发相应条件时买入的价格的算术平均值。'>整体平均采购成本 (CNY)</th><th title='计算: 周期总天数 / 触发次数。表示平均多少天触发一次采购条件。'>平均间隔天数</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            # --- Updated loop to unpack interval --- 
+            for name, (cost, adv_rate, points, interval_text) in results.items():
+                 # 为优势率添加悬停解释
                  adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
-                 interval_display = f"{avg_interval_text} / {max_interval_text}" # Format avg/max
-                 cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td>{interval_display}</td><td title='{adv_title}'>{adv_rate}</td></tr>" 
-            # END NEW
+                 # --- Add interval_text to table row --- 
+                 cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td>{interval_text}</td><td title='{adv_title}'>{adv_rate}</td></tr>" 
             cost_analysis_html += "</tbody></table>"
 
         else:
             cost_analysis_html += f"<p><em>无法进行分析：缺少必要的列 ({', '.join(missing_cols_analysis)})</em></p>" # Use renamed missing list
     else:
-        # --- 修改：天 -> 交易日 ---
-        cost_analysis_html += f"<p><em>数据似乎为空或过少 ({len(df)} 交易日)，无法进行成本效益分析。</em></p>" # Updated text for full period
+        cost_analysis_html += f"<p><em>数据似乎为空或过少 ({len(df)} 天)，无法进行成本效益分析。</em></p>" # Updated text for full period
 
     cost_analysis_html += "</ul>" # 结束无序列表（虽然现在是表格）
     # +++ 结束全周期分析 +++
@@ -1481,10 +1379,9 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
     # --- Ensure interval calculation for analysis_data is Fully Removed --- 
     # last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
     # interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
-    # interval_ok = interval_days >= MIN_PURCHASE_INTERVAL 
-    # interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (还需等待 {MIN_PURCHASE_INTERVAL - interval_days}天)</span>'
-    # report_html += f"<li title='...'>采购间隔：...</li>" # Ensure the display line is also removed/commented
-    # --- End Interval Check Removal ---
+    # interval_ok = interval_days >= MIN_PURCHASE_INTERVAL # Ensure removed
+    # interval_check_text = ... # Ensure removed
+    # --- End Removed interval calculation --- 
 
     base_req_met = condition_scores >= 4 # 这个要在 block_reasons 之前计算
     block_reasons = []
@@ -1494,7 +1391,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
     # if not interval_ok: block_reasons.append(f"采购间隔限制(还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)") 
     # --- End Interval Block Reason Removal --- 
     if not peak_filter_passed: block_reasons.append("价格形态不利")
-    if atr_overbought: block_reasons.append("ATR通道超买 (>80%)")
+    if atr_overbought: block_reasons.append(f"ATR通道超买({atr_value:.1f}%)")
 
     current_conditions_met = {f'cond{i}': current.get(f'core_cond{i}_met', False) for i in range(1, 7)}
 
@@ -1523,10 +1420,6 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interva
         # --- REMOVED interval fields from analysis_data --- 
         'base_req_met': base_req_met,
         'block_reasons': block_reasons, # 现在只包含明确的阻断原因
-        'days_since_last_actual_signal': days_since_last_actual_signal,
-        'min_purchase_interval': min_interval,
-        'interval_ok_today': days_since_last_actual_signal >= min_interval, # Simple check if interval is met *now*
-        'blocked_by_interval_today': was_blocked_by_interval, # Whether interval was the blocker *today*
     }
 
     # 返回包含报告内容和增强后分析数据的字典
@@ -1977,11 +1870,7 @@ def objective(trial, df_original):
 # --- 主程序：生成 HTML 报告 ---
 if __name__ == "__main__":
     print("开始执行银价分析...")
-    # print(f"试图访问 calculate_final_metrics: {calculate_final_metrics}") # <--- 移除测试行
-
-    # +++ 定义最小采购间隔 +++
-    MIN_PURCHASE_INTERVAL = 3
-    # ++++++++++++++++++++++
+    print(f"试图访问 calculate_final_metrics: {calculate_final_metrics}") # <--- 新增的测试行
 
     # 1. 加载数据
     print("正在加载数据...")
@@ -2008,62 +1897,11 @@ if __name__ == "__main__":
     # Pass 2: 生成最终信号 (未处理)
     df_final_unprocessed = generate_final_signals(df_final_metrics, rsi_threshold=optimized_rsi_threshold)
 
-    # --- 应用信号处理规则 (采购间隔) ---
-    print(f"\n--- 应用信号处理规则 (采购间隔 >= {MIN_PURCHASE_INTERVAL} 交易日) ---")
+    print("\n--- 应用信号处理规则 (采购间隔) ---")
     # 应用信号处理 (采购间隔过滤)
-    # OLD LOGIC CREATED DUPLICATE COLUMN
-    # df_processed_signals = df_final_unprocessed.copy()
-    # df_processed_signals['final_signal'] = False
-    # df_processed_signals['blocked_by_interval'] = False
-    # last_signal_day_index = -MIN_PURCHASE_INTERVAL - 1
-    # for i in range(len(df_processed_signals)):
-    #     unprocessed_signal_today = df_final_unprocessed['采购信号'].iloc[i]
-    #     days_since_last = i - last_signal_day_index
-    #     if unprocessed_signal_today:
-    #         if days_since_last >= MIN_PURCHASE_INTERVAL:
-    #             df_processed_signals.loc[i, 'final_signal'] = True
-    #             last_signal_day_index = i
-    #         else:
-    #             df_processed_signals.loc[i, 'blocked_by_interval'] = True
-    # df_report = df_processed_signals.rename(columns={'final_signal': '采购信号'})
+    df_report = df_final_unprocessed # Use unprocessed signals directly
+    # --- 结束新的计算流程 ---
 
-    # --- NEW: Interval Filtering Logic (Modify '采购信号' in place) --- 
-    df_report = df_final_unprocessed.copy() # Start with the unprocessed signals
-    df_report['blocked_by_interval'] = False # Initialize blocking flag
-    last_signal_day_index = -MIN_PURCHASE_INTERVAL - 1 # Initialize to allow the first signal
-
-    # Get the original unprocessed signals as a boolean Series *before* the loop
-    # Ensure boolean and handle potential non-boolean data defensively
-    try:
-        unprocessed_signals = df_report['采购信号'].fillna(False).astype(bool)
-    except Exception as e:
-        print(f"警告：无法将原始 '采购信号' 列转换为布尔值进行间隔过滤: {e}. 默认使用全 False 进行处理。")
-        unprocessed_signals = pd.Series([False] * len(df_report), index=df_report.index)
-        df_report['采购信号'] = False # Ensure the column exists and is False
-
-    # Iterate using index for safe .loc access
-    for i in df_report.index:
-        # Use .loc for potentially non-sequential index access after future modifications
-        unprocessed_signal_today = unprocessed_signals.loc[i]
-        days_since_last = i - last_signal_day_index # Assumes index is sequential for day counting
-
-        if unprocessed_signal_today: # Already checked for boolean
-            if days_since_last >= MIN_PURCHASE_INTERVAL:
-                # Signal remains True (no change needed to df_report.loc[i, '采购信号'])
-                last_signal_day_index = i # Update the last signal index
-            else:
-                # Overwrite the signal to False in the original '采购信号' column
-                df_report.loc[i, '采购信号'] = False
-                df_report.loc[i, 'blocked_by_interval'] = True # Mark as blocked by interval
-        else:
-            # If unprocessed is False, ensure the final signal is also False
-            # (Theoretically already False, but explicitly set for robustness)
-            df_report.loc[i, '采购信号'] = False
-
-    # --- End NEW Interval Filtering Logic ---
-
-    # Ensure unique index before passing to report/visualization (still good practice)
-    df_report = df_report.reset_index(drop=True)
 
     # --- 后续步骤保持不变，使用 df_report ---
     # 3. 生成主报告数据
@@ -2071,8 +1909,7 @@ if __name__ == "__main__":
     # 确保 generate_report 使用的是最终的 df_report
     # 注意: generate_report 内部的阈值比较文本可能需要更新，因为它使用了 '基线阈值'
     # 我们需要确保 df_report 包含所有 generate_report 需要的最终列名
-    # --- Update call to pass MIN_PURCHASE_INTERVAL --- 
-    report_data = generate_report(df_report.copy(), optimized_quantile, optimized_rsi_threshold, MIN_PURCHASE_INTERVAL)
+    report_data = generate_report(df_report.copy(), optimized_quantile, optimized_rsi_threshold)
     if isinstance(report_data, dict): # Check if report generation was successful
         report_html_content = report_data.get('report_content', "<p>报告生成失败</p>")
         analysis_data = report_data.get('analysis_data') # May be None
@@ -2087,12 +1924,7 @@ if __name__ == "__main__":
                  'ema21': 0, 'lower_band_ref': 0, 'ema_ratio': 1, 'dynamic_ema_threshold': 1,
                  'volatility': 0, 'vol_threshold': 0, 'peak_status_display': 'N/A',
                  # --- REMOVED default interval data --- 
-                 'base_req_met': False, 'block_reasons': ['报告数据生成失败'],
-                 'days_since_last_actual_signal': 9999,
-                 'min_purchase_interval': MIN_PURCHASE_INTERVAL,
-                 'interval_ok_today': True, 
-                 'blocked_by_interval_today': False,
-                 # --- End default interval data ---
+                 'base_req_met': False, 'block_reasons': ['报告数据生成失败']
              }
 
     else: # Handle case where generate_report returned only HTML string or error string
@@ -2108,12 +1940,7 @@ if __name__ == "__main__":
             'ema21': 0, 'lower_band_ref': 0, 'ema_ratio': 1, 'dynamic_ema_threshold': 1,
             'volatility': 0, 'vol_threshold': 0, 'peak_status_display': 'N/A',
             # --- REMOVED default interval data --- 
-            'base_req_met': False, 'block_reasons': ['报告数据生成失败'],
-            'days_since_last_actual_signal': 9999,
-            'min_purchase_interval': MIN_PURCHASE_INTERVAL,
-            'interval_ok_today': True, 
-            'blocked_by_interval_today': False,
-            # --- End default interval data ---
+            'base_req_met': False, 'block_reasons': ['报告数据生成失败']
         }
 
 
@@ -2198,30 +2025,12 @@ if __name__ == "__main__":
 
             today_interpretation_html += f'<li>当前未能满足买入要求的主要条件：<ul>{unmet_conditions_list}</ul></li>'
 
-            # --- Update conclusion logic to handle interval blocking --- 
             blocking_issues = analysis_data.get('block_reasons', [])
             conclusion_text = ''
-            # --- Check interval blocking specifically --- 
-            was_blocked_by_interval = analysis_data.get('blocked_by_interval_today', False)
-            base_req_met_today = analysis_data.get('base_req_met', False)
-            cond_scores_today = analysis_data.get('condition_scores', 'N/A')
-            days_since = analysis_data.get('days_since_last_actual_signal', '?')
-            min_req = analysis_data.get('min_purchase_interval', '?')
-
-            if not base_req_met_today: # First check core conditions
-                conclusion_text = f"由于仅满足 {cond_scores_today}/6 项核心条件，未能达到策略要求的最低数量。"
-            elif was_blocked_by_interval: # Then check if interval was the blocker
-                 conclusion_text = f"虽然核心条件达标({cond_scores_today}/6)，但距离上次信号仅 {days_since if days_since < 9999 else 'N/A'} 交易日，未达到最小间隔 {min_req} 交易日。"
-            elif blocking_issues: # Then check other blocking reasons
-                 # Filter out interval reason if it was already handled implicitly
-                 other_blockers = [r for r in blocking_issues if "间隔" not in r]
-                 if other_blockers:
-                     conclusion_text = '信号因以下规则被阻断：' + '； '.join(other_blockers) + '。'
-                 else: # Should ideally not happen if base_req_met is True and not blocked by interval, but maybe peak filter logic failed?
-                     conclusion_text = "未能产生采购信号，但阻断原因不明确（可能是数据或计算问题）。"
-            else: # Fallback if signal is False but no clear reason found
-                 conclusion_text = f"未能产生采购信号（核心条件{cond_scores_today}/6）。" # Generic fallback
-            # --- End conclusion logic update --- 
+            if blocking_issues:
+                conclusion_text = '信号因以下规则被阻断：' + '； '.join(blocking_issues) + '。'
+            elif not analysis_data.get('base_req_met', False):
+                 conclusion_text = f"由于仅满足 {analysis_data.get('condition_scores', 'N/A')}/6 项核心条件，未能达到策略要求的最低数量。"
 
             today_interpretation_html += f'<li><strong>结论：</strong><span style="color:red;">{conclusion_text} 因此，策略建议暂时持币观望。</span></li>'
 
@@ -2306,30 +2115,117 @@ if __name__ == "__main__":
             <ol>
                   <li><strong>核心条件达标：</strong>综合考量核心工业指标、RSI、价格与均线/通道关系、市场波动性等多个维度，需达到预设的触发数量（当前为至少4项）。这些指标现在基于考虑了信号历史的动态窗口进行计算。</li>
                   <li><strong>无信号阻断：</strong>排除近期不利价格形态或ATR通道超买（短期过热）的情况。</li>
-                  # --- Add interval rule description --- 
-                  <li><strong>满足采购间隔：</strong>距离上一次有效采购信号必须经过至少 {MIN_PURCHASE_INTERVAL} 个交易日。</li>
-                  # --- End interval rule description ---
             </ol>
-              """ # Correctly terminate the f-string here
-             } # Closing brace for the outer dictionary/logic block
+              """
+             }
 
             {today_interpretation_html if today_interpretation_html else "<p style='color:red;'>今日解读生成失败。</p>"}
         </div>
-    </div> # Removed the incorrect closing of body/html here
+    </div>
 </body>
 </html>
-""" # End of the final_html f-string assignment
+"""
 
-    # --- REMOVE the incorrect return statement --- 
-    # return final_html 
-    # --- End REMOVE ---
 
     # 7. 将完整的 HTML 写入文件 (主报告)
     output_filename = "index.html" 
     try:
         with open(output_filename, 'w', encoding='utf-8') as f:
             f.write(final_html)
-        print(f"报告已成功生成并保存到 '{output_filename}'")
+        print(f"成功将重构后的报告写入文件: {output_filename}")
     except Exception as e:
-        print(f"错误：将 HTML 写入文件时出错: {e}")
+        print(f"错误：写入重构后的 HTML 文件失败: {e}")
         traceback.print_exc()
+
+    # 8. 自动执行 Git 命令推送到 GitHub (保持不变)
+    print("尝试将更新推送到 GitHub...")
+    try:
+        # 检查是否有未提交的更改
+        status_result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True, check=True, encoding='utf-8')
+        if not status_result.stdout.strip():
+            print("没有检测到文件更改，无需推送。")
+        else:
+            print("检测到更改，开始执行 Git 命令...")
+            # 1. 添加所有更改
+            add_result = subprocess.run(['git', 'add', '.'], capture_output=True, text=True, check=True, encoding='utf-8')
+            print("Git 添加成功。")
+
+            # 2. 提交更改
+            commit_message = f"自动更新银价分析报告  - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            commit_result = subprocess.run(['git', 'commit', '-m', commit_message], capture_output=True, text=True, check=True, encoding='utf-8')
+            print("Git 提交成功。")
+
+            # 3. 获取当前分支名称
+            get_branch_result = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], capture_output=True, text=True, check=True, encoding='utf-8')
+            current_branch = get_branch_result.stdout.strip()
+            if not current_branch:
+                raise ValueError("无法获取当前 Git 分支名称。")
+            print(f"检测到当前分支为: {current_branch}")
+
+            # 4. 推送到远程仓库的当前分支 (无限重试，无等待)
+            push_attempt = 0
+            while True: # 无限循环直到成功
+                push_attempt += 1
+                try:
+                    print(f"尝试推送到 origin/{current_branch} (尝试 #{push_attempt})...")
+                    # 增加超时设置 (例如 60 秒) 防止单次尝试卡死
+                    push_result = subprocess.run(
+                        ['git', 'push', 'origin', current_branch],
+                        capture_output=True, text=True, check=True, encoding='utf-8', timeout=60
+                    )
+                    print("Git 推送成功。")
+                    break # 成功则跳出无限循环
+
+                except subprocess.TimeoutExpired:
+                    print(f"Git push 超时 (尝试 #{push_attempt})。将立即重试...")
+                    # 不等待，直接进入下一次循环
+
+                except subprocess.CalledProcessError as push_error:
+                    stderr_output = push_error.stderr.strip() if push_error.stderr else "无标准错误输出"
+                    print(f"Git push 失败 (尝试 #{push_attempt})。错误: {stderr_output}")
+                    # 根据错误判断是否应该停止重试 (可选，但推荐)
+                    if "Authentication failed" in stderr_output or "repository not found" in stderr_output or "fatal: repository" in stderr_output:
+                         print("检测到认证、仓库未找到或严重错误，停止重试。请手动检查配置。")
+                         # 这里可以选择抛出异常，让脚本知道推送最终失败
+                         raise RuntimeError(f"Git push failed due to configuration or permission issue: {stderr_output}")
+                         # 或者直接 break，让脚本继续往下执行（但不推荐，因为推送未完成）
+                         # break
+                    print("将立即重试...")
+                    # 不等待，直接进入下一次循环
+
+                except Exception as inner_e: # 捕捉推送过程中的其他意外错误
+                    print(f"推送过程中发生意外错误 (尝试 #{push_attempt}): {inner_e}")
+                    print("将立即重试...")
+                    # 不等待，直接进入下一次循环
+
+    # 处理 Git status/add/commit/rev-parse 阶段的错误
+    except subprocess.CalledProcessError as e:
+        cmd_str = ' '.join(e.cmd) if e.cmd else 'N/A'
+        print(f"Git 命令执行错误 (非推送阶段): {e}")
+        print(f"命令: {cmd_str}")
+        print(f"返回码: {e.returncode}")
+        if e.stderr:
+            print(f"错误输出: {e.stderr.strip()}")
+            # 保留之前的详细错误提示
+            if "Authentication failed" in e.stderr or "could not read Username" in e.stderr:
+                print("提示：Git 认证失败。请检查您的凭据（HTTPS token 或 SSH key）是否配置正确且有效。")
+            elif "repository not found" in e.stderr:
+                print("提示：远程仓库未找到。请检查仓库 URL 是否正确以及您是否有访问权限。")
+        elif e.stdout:
+             print(f"输出: {e.stdout.strip()}")
+
+    except FileNotFoundError:
+        print("错误：未找到 'git' 命令。请确保 Git 已安装并添加到系统 PATH。")
+    except Exception as e:
+        # 捕获 ValueError 或其他未知错误
+        print(f"执行 Git 命令或处理过程中发生未知错误: {e}")
+
+    print("\n分析完成。")
+
+
+# --- 定义：Pass 2 最终指标计算 ---
+
+
+
+
+
