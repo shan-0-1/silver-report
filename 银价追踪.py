@@ -903,24 +903,30 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     HOVER_TEXTS = {
         'price': "从数据源获取的每日收盘价。",
         'indicator': "计算思路: (价格/短期均线) * (价格/长期均线) * (1 - 动量因子)。综合衡量价格位置和波动性。",
-        # --- 修改：在描述中加入 quantile 参数 --- 
-        'threshold': f"计算思路: 最近 {HISTORY_WINDOW} 天工业指标的 {optimized_quantile*100:.0f}% 分位数。是工业指标的动态买入参考线。",
+        # --- 修改：在描述中加入 quantile 参数 和 交易日 ---
+        'threshold': f"计算思路: 最近 {HISTORY_WINDOW} 交易日工业指标的 {optimized_quantile*100:.0f}% 分位数。是工业指标的动态买入参考线。",
         'signal': "综合所有核心条件和阻断规则得出的最终建议。",
-        'dynamic_window': f"计算思路: 基准窗口({BASE_WINDOW_SHORT}/{BASE_WINDOW_LONG}天)根据距离上次购买天数进行衰减({WINDOW_DECAY_RATE}率)，最短{MIN_WINDOW_SHORT}天。距离越久，窗口越短，越灵敏。",
+        # --- 修改：天 -> 交易日 ---
+        'dynamic_window': f"计算思路: 基准窗口({BASE_WINDOW_SHORT}/{BASE_WINDOW_LONG}交易日)根据距离上次购买天数进行衰减({WINDOW_DECAY_RATE}率)，最短{MIN_WINDOW_SHORT}交易日。距离越久，窗口越短，越灵敏。",
         'price_trend': "计算思路: (当前价格 / 短期动态均线 - 1) * 100%。表示价格偏离近期平均成本的程度。",
-        'volatility': f"计算思路: 最近 {int(current.get('动态短窗口', BASE_WINDOW_SHORT))} 天内每日价格变化百分比绝对值的平均值。此指标衡量价格波动的剧烈程度（即近期波动率），值越低表示市场越平静。注意：名称可能易误导，它主要反映波动性而非趋势动量。",
+        # --- 修改：天 -> 交易日 ---
+        'volatility': f"计算思路: 最近 {int(current.get('动态短窗口', BASE_WINDOW_SHORT))} 交易日内每日价格变化百分比绝对值的平均值。此指标衡量价格波动的剧烈程度（即近期波动率），值越低表示市场越平静。注意：名称可能易误导，它主要反映波动性而非趋势动量。",
         'core_cond1': f"工业指标 ({indicator:.2f}) 是否低于基线阈值 ({threshold:.2f})？",
         # --- 修改：在描述中加入 rsi 参数 --- 
         'core_cond2': f"修正RSI ({rsi:.1f}) 是否低于 {optimized_rsi_threshold}？RSI通过计算一定时期内上涨日和下跌日的平均涨跌幅得到，衡量买卖力量对比，低于此值表示可能超卖（下跌过度）。",
         'core_cond3': f"当前价格 ({price:.2f}) 是否低于 EMA21 ({ema21:.2f})？EMA是指数移动平均线，给予近期价格更高权重。",
         'core_cond4': f"当前价格 ({price:.2f}) 是否低于布林下轨 ({lower_band:.2f}) 的 1.05 倍 ({lower_band * 1.05:.2f})？布林通道基于移动平均线加减标准差得到，衡量价格相对波动范围。",
         'core_cond5': f"EMA9/EMA21比率 ({ema_ratio:.3f}) 是否大于动态阈值 ({dynamic_threshold:.3f})？该阈值会根据波动性调整。",
-        'core_cond6': f"波动率因子 ({volatility:.3f}) 是否低于其动态阈值 ({vol_threshold:.3f})？该阈值是波动率因子自身的45日35%分位数。",
+        # --- 修改：日 -> 交易日 ---
+        'core_cond6': f"波动率因子 ({volatility:.3f}) 是否低于其动态阈值 ({vol_threshold:.3f})？该阈值是波动率因子自身的45交易日35%分位数。",
         'cond_score': f"满足以上6个核心条件的数量（部分条件阈值可能已优化），至少需要满足4个才能初步考虑买入。", # 更新提示
-        'peak_filter': f"一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨80%以上位置（可能短期过热），用于排除一些潜在的顶部信号。",
-        'window_decay': "显示当前动态短窗口相比基准窗口缩短了多少天，反映了衰减机制的效果。",
+        # --- 修改：日 -> 交易日 ---
+        'peak_filter': f"一个内部过滤器，检查近3交易日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨80%以上位置（可能短期过热），用于排除一些潜在的顶部信号。",
+        # --- 修改：天 -> 交易日 ---
+        'window_decay': "显示当前动态短窗口相比基准窗口缩短了多少交易日，反映了衰减机制的效果。",
         'ema_trend': f"基于EMA9, EMA21, EMA50的相对位置判断短期趋势。状态为1代表上涨趋势，-1代表下跌趋势。", # Modified explanation
         'final_block': "总结导致最终未能产生买入信号的具体原因。",
+        # --- 修改：三日 -> 三交易日 ---
         '3day_change': "最近三个交易日的价格变化绝对值和方向。",
         'ema_crossover': "基于 EMA9 和 EMA21 的直接相对位置。金叉状态 (EMA9 > EMA21) 通常视为看涨倾向，死叉状态 (EMA9 < EMA21) 通常视为看跌倾向。图表上的标记 (↑/↓) 显示精确的交叉点。" # Explanation for EMA crossover
     }
@@ -1041,7 +1047,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     atr_value = ((price - atr_lower) / atr_denominator) * 100 if atr_denominator != 0 else 50.0
     atr_overbought = atr_value > 80
     # 简化 title 属性的引号
-    report_html += f"<li title='一个内部过滤器，检查近3日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：{peak_status_text} | ATR通道位置 {atr_value:.1f}%</li>"
+    report_html += f"<li title='一个内部过滤器，检查近3交易日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：{peak_status_text} | ATR通道位置 {atr_value:.1f}%</li>"
 
     # --- Ensure Interval Check Display and Calculation is Fully Removed --- 
     # last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
@@ -1054,7 +1060,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
     window_effect = BASE_WINDOW_SHORT - int(current.get('动态短窗口', BASE_WINDOW_SHORT))
     # 简化 title 属性的引号
-    report_html += f"<li title='{HOVER_TEXTS['window_decay'].replace('\"','&quot;')}'>窗口衰减效果：当前短窗口比基准小 {window_effect}天 (基准{BASE_WINDOW_SHORT} → 当前{int(current.get('动态短窗口', BASE_WINDOW_SHORT))})</li>" # 确保是整数
+    report_html += f"<li title='{HOVER_TEXTS['window_decay'].replace('\"','&quot;')}'>窗口衰减效果：当前短窗口比基准小 {window_effect}交易日 (基准{BASE_WINDOW_SHORT} → 当前{int(current.get('动态短窗口', BASE_WINDOW_SHORT))})</li>" # 确保是整数
 
     ema_trend_val = current.get('EMA趋势', 0)
     ema_trend_text = '<span style="color:green;">上涨趋势</span>' if ema_trend_val == 1 else '<span style="color:red;">下跌趋势</span>' if ema_trend_val == -1 else "震荡"
@@ -1087,18 +1093,19 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         three_day_diff = price - three_day_ago_price
         # 简化 title 属性的引号
         report_html += f"""
-        <h3 title='{HOVER_TEXTS['3day_change'].replace('\"','&quot;')}'>📉 三日价格变化参考：</h3>
+        <h3 title='{HOVER_TEXTS['3day_change'].replace('\"','&quot;')}'>📉 三交易日价格变化参考：</h3>
         <ul>
             <li>三日前 ({three_day_ago_date}) 价格：{three_day_ago_price:.2f}</li>
    
-            <li>三日价格变动：<span style="color:{'green' if three_day_diff >= 0 else 'red'};">{'+' if three_day_diff >= 0 else ''}{three_day_diff:.2f}</span></li>
+            <li>三交易日价格变动：<span style="color:{'green' if three_day_diff >= 0 else 'red'};">{ '+' if three_day_diff >= 0 else ''}{three_day_diff:.2f}</span></li>
         </ul>"""
     else:
-         report_html += "<h3>📉 三日价格变化参考：数据不足</h3>"
+         report_html += "<h3>📉 三交易日价格变化参考：数据不足</h3>"
 
     # --- Re-introduce Recent (252 days) Cost-Benefit Analysis --- 
     N_DAYS_RECENT = 252
-    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析：</h3>" 
+    # --- 修改：天 -> 交易日 ---
+    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}交易日) 成本效益分析：</h3>" 
 
     if len(df) >= N_DAYS_RECENT:
         df_recent = df.iloc[-N_DAYS_RECENT:].copy() # 获取最近 N 天数据副本
@@ -1108,7 +1115,8 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         if not missing_cols_recent:
             avg_market_price_recent = safe_float(df_recent['Price'].mean())
             total_days_recent = N_DAYS_RECENT
-            recent_cost_analysis_html += f"<p>同期市场平均价格: {avg_market_price_recent:.2f} CNY ({total_days_recent} 天)</p>"
+            # --- 修改：天 -> 交易日 ---
+            recent_cost_analysis_html += f"<p>同期市场平均价格: {avg_market_price_recent:.2f} CNY ({total_days_recent} 交易日)</p>"
             recent_cost_analysis_html += "<ul style='list-style-type: none; padding-left: 0;'>"
             results_recent = {}
 
@@ -1199,7 +1207,8 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
             # 构建 HTML 表格 (Recent)
             recent_cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
             # NEW: Update table header for interval column
-            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th title='计算: 在指定周期内，每次触发相应条件时买入的价格的算术平均值。'>近期平均采购成本 (CNY)</th><th title='计算: 周期总天数 / 触发次数 (平均值) | 两次触发之间的最大天数 (最大值)'>平均/最大间隔天数</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            # --- 修改：天数 -> 交易日数, 天 -> 交易日 ---
+            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th title='计算: 在指定周期内，每次触发相应条件时买入的价格的算术平均值。'>近期平均采购成本 (CNY)</th><th title='计算: 周期总交易日数 / 触发次数 (平均值) | 两次触发之间的最大交易日数 (最大值)'>平均/最大间隔交易日</th><th>相对市场均价优势率</th></tr></thead><tbody>"
             # NEW: Unpack max_interval_text and format the interval cell
             for name, (cost, adv_rate, points, avg_interval_text, max_interval_text) in results_recent.items():
                  adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
@@ -1210,7 +1219,8 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         else:
             recent_cost_analysis_html += f"<p><em>无法进行近期分析：缺少必要的列 ({', '.join(missing_cols_recent)})</em></p>"
     else:
-        recent_cost_analysis_html += f"<p><em>数据不足 ({len(df)} 天)，无法进行 {N_DAYS_RECENT} 天成本效益分析。</em></p>"
+        # --- 修改：天 -> 交易日 ---
+        recent_cost_analysis_html += f"<p><em>数据不足 ({len(df)} 交易日)，无法进行 {N_DAYS_RECENT} 交易日成本效益分析。</em></p>"
     recent_cost_analysis_html += "</ul>"
     # --- End Re-introduced Recent Analysis ---
 
@@ -1233,7 +1243,8 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
             # --- Ensure total_days_in_scope is defined here --- 
             total_days_in_scope = len(df_analysis_scope)
 
-            cost_analysis_html += f"<p>全周期市场平均价格: {avg_market_price_full:.2f} CNY ({total_days_in_scope} 天)</p>" # Updated text and variable, added total days
+            # --- 修改：天 -> 交易日 ---
+            cost_analysis_html += f"<p>全周期市场平均价格: {avg_market_price_full:.2f} CNY ({total_days_in_scope} 交易日)</p>" # Updated text and variable, added total days
             cost_analysis_html += "<ul style='list-style-type: none; padding-left: 0;'>"
 
             results = {} # 存储不同策略的计算结果
@@ -1326,7 +1337,8 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
             # 构建 HTML 表格展示结果
             cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
             # NEW: Update table header for interval column
-            cost_analysis_html += "<thead><tr><th>触发条件</th><th>总触发次数</th><th title='计算: 在整个数据周期内，每次触发相应条件时买入的价格的算术平均值。'>整体平均采购成本 (CNY)</th><th title='计算: 周期总天数 / 触发次数 (平均值) | 两次触发之间的最大天数 (最大值)'>平均/最大间隔天数</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            # --- 修改：天数 -> 交易日数, 天 -> 交易日 ---
+            cost_analysis_html += "<thead><tr><th>触发条件</th><th>总触发次数</th><th title='计算: 在整个数据周期内，每次触发相应条件时买入的价格的算术平均值。'>整体平均采购成本 (CNY)</th><th title='计算: 周期总交易日数 / 触发次数 (平均值) | 两次触发之间的最大交易日数 (最大值)'>平均/最大间隔交易日</th><th>相对市场均价优势率</th></tr></thead><tbody>"
             # NEW: Unpack max_interval_text and format the interval cell
             for name, (cost, adv_rate, points, avg_interval_text, max_interval_text) in results.items():
                  adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
@@ -1338,7 +1350,8 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         else:
             cost_analysis_html += f"<p><em>无法进行分析：缺少必要的列 ({', '.join(missing_cols_analysis)})</em></p>" # Use renamed missing list
     else:
-        cost_analysis_html += f"<p><em>数据似乎为空或过少 ({len(df)} 天)，无法进行成本效益分析。</em></p>" # Updated text for full period
+        # --- 修改：天 -> 交易日 ---
+        cost_analysis_html += f"<p><em>数据似乎为空或过少 ({len(df)} 交易日)，无法进行成本效益分析。</em></p>" # Updated text for full period
 
     cost_analysis_html += "</ul>" # 结束无序列表（虽然现在是表格）
     # +++ 结束全周期分析 +++
