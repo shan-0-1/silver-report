@@ -831,7 +831,7 @@ def peak_filter(df, upper_col='波动上轨', lower_col='波动下轨'): # <-- A
     # Ensure result is boolean Series
     return ~(peak_condition | overbought_atr).astype(bool)
 
-def generate_report(df, optimized_quantile, optimized_rsi_threshold):
+def generate_report(df, optimized_quantile, optimized_rsi_threshold, min_interval): # Add min_interval parameter
     """
     生成包含详细解释和悬停提示的 HTML 格式分析报告。
     此报告旨在帮助用户（即使不熟悉金融交易）理解当前的白银市场状况以及策略的买入建议。
@@ -862,6 +862,18 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
 
     current = df.iloc[-1]
+
+    # --- Explicitly get the boolean value for the signal --- 
+    is_signal_today = False # Default to False
+    if '采购信号' in current:
+        try:
+            # Attempt to directly cast the value to bool
+            is_signal_today = bool(current['采购信号'])
+        except ValueError: 
+            # Handle cases where direct casting fails (e.g., unexpected type)
+            print(f"警告：无法将 current['采购信号'] ({current['采购信号']}) 直接转换为布尔值，默认为 False。")
+            is_signal_today = False
+    # --- End explicit boolean extraction --- 
 
     # --- 确保 current 中的值是有效的数字 ---
     def safe_float(value, default=0.0):
@@ -928,6 +940,9 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         'final_block': "总结导致最终未能产生买入信号的具体原因。",
         # --- 修改：三日 -> 三交易日 ---
         '3day_change': "最近三个交易日的价格变化绝对值和方向。",
+        # --- NEW: Add hover text for interval check --- 
+        'interval_check': f"策略要求两次有效采购信号之间至少间隔 {min_interval} 个交易日。",
+        # --- End NEW --- 
         'ema_crossover': "基于 EMA9 和 EMA21 的直接相对位置。金叉状态 (EMA9 > EMA21) 通常视为看涨倾向，死叉状态 (EMA9 < EMA21) 通常视为看跌倾向。图表上的标记 (↑/↓) 显示精确的交叉点。" # Explanation for EMA crossover
     }
 
@@ -940,8 +955,8 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         <p><strong title='{HOVER_TEXTS['price']}'>当前价格：</strong>{price:.2f} CNY</p>
         <p><strong title='{HOVER_TEXTS['indicator']}'>核心指标（工业指标）：</strong>{indicator:.2f} <span title='{HOVER_TEXTS['threshold']}'>（买入参考阈值：低于 {threshold:.2f}）</span></p>
 
-
-        <h3 title='{HOVER_TEXTS['signal']}'>🛒 今日建议：{'<span style="color:green; font-weight:bold;">立即采购</span>' if current['采购信号'] else '<span style="color:orange; font-weight:bold;">持币观望</span>'}</h3>
+        # --- Use the explicitly extracted boolean variable --- 
+        <h3 title='{HOVER_TEXTS['signal']}'>🛒 今日建议：{'<span style="color:green; font-weight:bold;">立即采购</span>' if is_signal_today else '<span style="color:orange; font-weight:bold;">持币观望</span>'}</h3>
         <p><em>（此建议基于以下综合分析，需至少满足4个核心条件且无阻断信号）</em></p>
 
         <h3>策略状态：</h3>
@@ -1008,6 +1023,29 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         report_html += f'<li style="margin-bottom: 5px;" title="{title_attr}"><span style="color: {status_color}; margin-right: 5px;">{status_icon}</span> {i}. {desc[0]}：{desc[1]}</li>'
     report_html += "</ul>"
 
+    # --- RE-INSERT Calculation for days since last actual signal ---
+    df_report_copy_interval = df.copy() # Use the df passed to the function
+    # Ensure '采购信号' column exists and is boolean
+    if '采购信号' not in df_report_copy_interval.columns:
+        df_report_copy_interval['采购信号'] = False # Add if missing and set all to False
+    else:
+        # Ensure the column is boolean, fill NaNs with False first
+        if not pd.api.types.is_bool_dtype(df_report_copy_interval['采购信号']):
+            # Try a more direct conversion, handling potential NaNs
+            try:
+                # Fill NA with False, then convert to bool
+                df_report_copy_interval['采购信号'] = df_report_copy_interval['采购信号'].fillna(False).astype(bool)
+            except Exception as e:
+                 print(f"警告：尝试转换 '采购信号' 列为布尔值失败: {e}. 将使用全 False 列。")
+                 df_report_copy_interval['采购信号'] = False # Fallback to all False if conversion fails
+
+    # Now the column should definitely be boolean (or all False)
+    actual_signals = df_report_copy_interval[df_report_copy_interval['采购信号']] # This filter requires a boolean Series
+    last_actual_signal_index = actual_signals.index[-1] if not actual_signals.empty else -1
+    current_index = df_report_copy_interval.index[-1]
+    days_since_last_actual_signal = (current_index - last_actual_signal_index) if last_actual_signal_index != -1 else 9999 # Large number if no prior signal
+    # --- End RE-INSERT ---
+
     report_html += "<h3>🔍 信号阻断分析（即使满足4个以上条件，以下情况也会阻止买入）：</h3><ul>"
 
     condition_scores = sum([current.get(f'core_cond{i}_met', False) for i in range(1, 7)])
@@ -1049,14 +1087,13 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     # 简化 title 属性的引号
     report_html += f"<li title='一个内部过滤器，检查近3交易日价格形态是否不利（如冲高回落），以及价格是否处于ATR计算的通道上轨({atr_upper:.2f})80%以上位置，用于排除一些潜在的顶部信号。'>价格形态/ATR过滤：{peak_status_text} | ATR通道位置 {atr_value:.1f}%</li>"
 
-    # --- Ensure Interval Check Display and Calculation is Fully Removed --- 
-    # last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
-    # interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
-    # The following line caused the NameError, ensure it's removed/commented:
-    # interval_ok = interval_days >= MIN_PURCHASE_INTERVAL 
-    # interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (还需等待 {MIN_PURCHASE_INTERVAL - interval_days}天)</span>'
-    # report_html += f"<li title='...'>采购间隔：...</li>" # Ensure the display line is also removed/commented
-    # --- End Interval Check Removal ---
+    # --- Re-add Interval Check --- 
+    # interval_ok = days_since_last_actual_signal >= min_interval # Check against last *actual* signal
+    # interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (距上次信号{days_since_last_actual_signal}交易日, 需≥{min_interval})</span>'
+    # report_html += f"<li title='{HOVER_TEXTS['interval_check'].replace('"' , '&quot;')}'>采购间隔检查：{interval_check_text}</li>"
+    # --- 修改：间隔检查显示当前状态，而非是否满足未来信号 --- 
+    report_html += f"<li title='{HOVER_TEXTS['interval_check'].replace('"' , '&quot;')}'>采购间隔状态：距离上次信号 {days_since_last_actual_signal if days_since_last_actual_signal < 9999 else 'N/A'} 交易日 (要求 ≥ {min_interval})</li>"
+    # --- 结束修改 ---
 
     window_effect = BASE_WINDOW_SHORT - int(current.get('动态短窗口', BASE_WINDOW_SHORT))
     # 简化 title 属性的引号
@@ -1075,11 +1112,30 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     else:
         block_reasons = []
         if not base_req_met: block_reasons.append("核心条件不足 (未满足≥4项)")
-        # --- Ensure Interval Reason is Fully Removed --- 
-        # if not interval_ok: block_reasons.append(f"采购间隔限制 (还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)") 
-        # --- End Interval Reason Removal --- 
+        
+        # --- Add interval blocking reason check --- 
+        # Ensure 'blocked_by_interval' column exists, default to False if not
+        was_blocked_by_interval = current.get('blocked_by_interval', False)
+        
+        # Convert non-boolean to boolean, filling NaN with False
+        # --- Simpler and safer conversion to Python bool --- 
+        try:
+            # Directly cast to standard Python bool
+            was_blocked_by_interval = bool(was_blocked_by_interval)
+        except Exception:
+             # If casting somehow fails, default to False
+             print(f"警告：无法将 was_blocked_by_interval ({was_blocked_by_interval}) 转换为布尔值，默认为 False。")
+             was_blocked_by_interval = False
+        # --- End simpler conversion ---
+            
+        # Check if the *reason* for no signal today was the interval
+        if not current['采购信号'] and was_blocked_by_interval:
+             block_reasons.append(f"采购间隔限制 (距上次{days_since_last_actual_signal}交易日, 需≥{min_interval})") # Use passed min_interval
+        # --- End interval check --- 
+        
         if not peak_filter_passed: block_reasons.append("价格形态不利")
         if atr_overbought: block_reasons.append("ATR通道超买 (>80%)")
+        
         reason_str = ' + '.join(block_reasons) if block_reasons else '核心条件未完全满足或其它因素'
         # 简化 title 属性的引号
         report_html += f"<h3 title='{HOVER_TEXTS['final_block'].replace('\"','&quot;')}'>⛔ 最终阻断原因：<span style='color:red;'>{reason_str}</span></h3>"
@@ -1425,9 +1481,10 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     # --- Ensure interval calculation for analysis_data is Fully Removed --- 
     # last_signal_index = df[df['采购信号']].index[-1] if df['采购信号'].any() else -1
     # interval_days = len(df) - 1 - last_signal_index if last_signal_index != -1 else 999
-    # interval_ok = interval_days >= MIN_PURCHASE_INTERVAL # Ensure removed
-    # interval_check_text = ... # Ensure removed
-    # --- End Removed interval calculation --- 
+    # interval_ok = interval_days >= MIN_PURCHASE_INTERVAL 
+    # interval_check_text = '<span style="color:green;">满足</span>' if interval_ok else f'<span style="color:orange;">不满足 (还需等待 {MIN_PURCHASE_INTERVAL - interval_days}天)</span>'
+    # report_html += f"<li title='...'>采购间隔：...</li>" # Ensure the display line is also removed/commented
+    # --- End Interval Check Removal ---
 
     base_req_met = condition_scores >= 4 # 这个要在 block_reasons 之前计算
     block_reasons = []
@@ -1437,7 +1494,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     # if not interval_ok: block_reasons.append(f"采购间隔限制(还需{max(0, MIN_PURCHASE_INTERVAL - interval_days)}天)") 
     # --- End Interval Block Reason Removal --- 
     if not peak_filter_passed: block_reasons.append("价格形态不利")
-    if atr_overbought: block_reasons.append(f"ATR通道超买({atr_value:.1f}%)")
+    if atr_overbought: block_reasons.append("ATR通道超买 (>80%)")
 
     current_conditions_met = {f'cond{i}': current.get(f'core_cond{i}_met', False) for i in range(1, 7)}
 
@@ -1466,6 +1523,10 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         # --- REMOVED interval fields from analysis_data --- 
         'base_req_met': base_req_met,
         'block_reasons': block_reasons, # 现在只包含明确的阻断原因
+        'days_since_last_actual_signal': days_since_last_actual_signal,
+        'min_purchase_interval': min_interval,
+        'interval_ok_today': days_since_last_actual_signal >= min_interval, # Simple check if interval is met *now*
+        'blocked_by_interval_today': was_blocked_by_interval, # Whether interval was the blocker *today*
     }
 
     # 返回包含报告内容和增强后分析数据的字典
@@ -1916,7 +1977,11 @@ def objective(trial, df_original):
 # --- 主程序：生成 HTML 报告 ---
 if __name__ == "__main__":
     print("开始执行银价分析...")
-    print(f"试图访问 calculate_final_metrics: {calculate_final_metrics}") # <--- 新增的测试行
+    # print(f"试图访问 calculate_final_metrics: {calculate_final_metrics}") # <--- 移除测试行
+
+    # +++ 定义最小采购间隔 +++
+    MIN_PURCHASE_INTERVAL = 3
+    # ++++++++++++++++++++++
 
     # 1. 加载数据
     print("正在加载数据...")
@@ -1943,11 +2008,62 @@ if __name__ == "__main__":
     # Pass 2: 生成最终信号 (未处理)
     df_final_unprocessed = generate_final_signals(df_final_metrics, rsi_threshold=optimized_rsi_threshold)
 
-    print("\n--- 应用信号处理规则 (采购间隔) ---")
+    # --- 应用信号处理规则 (采购间隔) ---
+    print(f"\n--- 应用信号处理规则 (采购间隔 >= {MIN_PURCHASE_INTERVAL} 交易日) ---")
     # 应用信号处理 (采购间隔过滤)
-    df_report = df_final_unprocessed # Use unprocessed signals directly
-    # --- 结束新的计算流程 ---
+    # OLD LOGIC CREATED DUPLICATE COLUMN
+    # df_processed_signals = df_final_unprocessed.copy()
+    # df_processed_signals['final_signal'] = False
+    # df_processed_signals['blocked_by_interval'] = False
+    # last_signal_day_index = -MIN_PURCHASE_INTERVAL - 1
+    # for i in range(len(df_processed_signals)):
+    #     unprocessed_signal_today = df_final_unprocessed['采购信号'].iloc[i]
+    #     days_since_last = i - last_signal_day_index
+    #     if unprocessed_signal_today:
+    #         if days_since_last >= MIN_PURCHASE_INTERVAL:
+    #             df_processed_signals.loc[i, 'final_signal'] = True
+    #             last_signal_day_index = i
+    #         else:
+    #             df_processed_signals.loc[i, 'blocked_by_interval'] = True
+    # df_report = df_processed_signals.rename(columns={'final_signal': '采购信号'})
 
+    # --- NEW: Interval Filtering Logic (Modify '采购信号' in place) --- 
+    df_report = df_final_unprocessed.copy() # Start with the unprocessed signals
+    df_report['blocked_by_interval'] = False # Initialize blocking flag
+    last_signal_day_index = -MIN_PURCHASE_INTERVAL - 1 # Initialize to allow the first signal
+
+    # Get the original unprocessed signals as a boolean Series *before* the loop
+    # Ensure boolean and handle potential non-boolean data defensively
+    try:
+        unprocessed_signals = df_report['采购信号'].fillna(False).astype(bool)
+    except Exception as e:
+        print(f"警告：无法将原始 '采购信号' 列转换为布尔值进行间隔过滤: {e}. 默认使用全 False 进行处理。")
+        unprocessed_signals = pd.Series([False] * len(df_report), index=df_report.index)
+        df_report['采购信号'] = False # Ensure the column exists and is False
+
+    # Iterate using index for safe .loc access
+    for i in df_report.index:
+        # Use .loc for potentially non-sequential index access after future modifications
+        unprocessed_signal_today = unprocessed_signals.loc[i]
+        days_since_last = i - last_signal_day_index # Assumes index is sequential for day counting
+
+        if unprocessed_signal_today: # Already checked for boolean
+            if days_since_last >= MIN_PURCHASE_INTERVAL:
+                # Signal remains True (no change needed to df_report.loc[i, '采购信号'])
+                last_signal_day_index = i # Update the last signal index
+            else:
+                # Overwrite the signal to False in the original '采购信号' column
+                df_report.loc[i, '采购信号'] = False
+                df_report.loc[i, 'blocked_by_interval'] = True # Mark as blocked by interval
+        else:
+            # If unprocessed is False, ensure the final signal is also False
+            # (Theoretically already False, but explicitly set for robustness)
+            df_report.loc[i, '采购信号'] = False
+
+    # --- End NEW Interval Filtering Logic ---
+
+    # Ensure unique index before passing to report/visualization (still good practice)
+    df_report = df_report.reset_index(drop=True)
 
     # --- 后续步骤保持不变，使用 df_report ---
     # 3. 生成主报告数据
@@ -1955,7 +2071,8 @@ if __name__ == "__main__":
     # 确保 generate_report 使用的是最终的 df_report
     # 注意: generate_report 内部的阈值比较文本可能需要更新，因为它使用了 '基线阈值'
     # 我们需要确保 df_report 包含所有 generate_report 需要的最终列名
-    report_data = generate_report(df_report.copy(), optimized_quantile, optimized_rsi_threshold)
+    # --- Update call to pass MIN_PURCHASE_INTERVAL --- 
+    report_data = generate_report(df_report.copy(), optimized_quantile, optimized_rsi_threshold, MIN_PURCHASE_INTERVAL)
     if isinstance(report_data, dict): # Check if report generation was successful
         report_html_content = report_data.get('report_content', "<p>报告生成失败</p>")
         analysis_data = report_data.get('analysis_data') # May be None
@@ -1970,7 +2087,12 @@ if __name__ == "__main__":
                  'ema21': 0, 'lower_band_ref': 0, 'ema_ratio': 1, 'dynamic_ema_threshold': 1,
                  'volatility': 0, 'vol_threshold': 0, 'peak_status_display': 'N/A',
                  # --- REMOVED default interval data --- 
-                 'base_req_met': False, 'block_reasons': ['报告数据生成失败']
+                 'base_req_met': False, 'block_reasons': ['报告数据生成失败'],
+                 'days_since_last_actual_signal': 9999,
+                 'min_purchase_interval': MIN_PURCHASE_INTERVAL,
+                 'interval_ok_today': True, 
+                 'blocked_by_interval_today': False,
+                 # --- End default interval data ---
              }
 
     else: # Handle case where generate_report returned only HTML string or error string
@@ -1986,7 +2108,12 @@ if __name__ == "__main__":
             'ema21': 0, 'lower_band_ref': 0, 'ema_ratio': 1, 'dynamic_ema_threshold': 1,
             'volatility': 0, 'vol_threshold': 0, 'peak_status_display': 'N/A',
             # --- REMOVED default interval data --- 
-            'base_req_met': False, 'block_reasons': ['报告数据生成失败']
+            'base_req_met': False, 'block_reasons': ['报告数据生成失败'],
+            'days_since_last_actual_signal': 9999,
+            'min_purchase_interval': MIN_PURCHASE_INTERVAL,
+            'interval_ok_today': True, 
+            'blocked_by_interval_today': False,
+            # --- End default interval data ---
         }
 
 
@@ -2071,12 +2198,30 @@ if __name__ == "__main__":
 
             today_interpretation_html += f'<li>当前未能满足买入要求的主要条件：<ul>{unmet_conditions_list}</ul></li>'
 
+            # --- Update conclusion logic to handle interval blocking --- 
             blocking_issues = analysis_data.get('block_reasons', [])
             conclusion_text = ''
-            if blocking_issues:
-                conclusion_text = '信号因以下规则被阻断：' + '； '.join(blocking_issues) + '。'
-            elif not analysis_data.get('base_req_met', False):
-                 conclusion_text = f"由于仅满足 {analysis_data.get('condition_scores', 'N/A')}/6 项核心条件，未能达到策略要求的最低数量。"
+            # --- Check interval blocking specifically --- 
+            was_blocked_by_interval = analysis_data.get('blocked_by_interval_today', False)
+            base_req_met_today = analysis_data.get('base_req_met', False)
+            cond_scores_today = analysis_data.get('condition_scores', 'N/A')
+            days_since = analysis_data.get('days_since_last_actual_signal', '?')
+            min_req = analysis_data.get('min_purchase_interval', '?')
+
+            if not base_req_met_today: # First check core conditions
+                conclusion_text = f"由于仅满足 {cond_scores_today}/6 项核心条件，未能达到策略要求的最低数量。"
+            elif was_blocked_by_interval: # Then check if interval was the blocker
+                 conclusion_text = f"虽然核心条件达标({cond_scores_today}/6)，但距离上次信号仅 {days_since if days_since < 9999 else 'N/A'} 交易日，未达到最小间隔 {min_req} 交易日。"
+            elif blocking_issues: # Then check other blocking reasons
+                 # Filter out interval reason if it was already handled implicitly
+                 other_blockers = [r for r in blocking_issues if "间隔" not in r]
+                 if other_blockers:
+                     conclusion_text = '信号因以下规则被阻断：' + '； '.join(other_blockers) + '。'
+                 else: # Should ideally not happen if base_req_met is True and not blocked by interval, but maybe peak filter logic failed?
+                     conclusion_text = "未能产生采购信号，但阻断原因不明确（可能是数据或计算问题）。"
+            else: # Fallback if signal is False but no clear reason found
+                 conclusion_text = f"未能产生采购信号（核心条件{cond_scores_today}/6）。" # Generic fallback
+            # --- End conclusion logic update --- 
 
             today_interpretation_html += f'<li><strong>结论：</strong><span style="color:red;">{conclusion_text} 因此，策略建议暂时持币观望。</span></li>'
 
@@ -2161,117 +2306,30 @@ if __name__ == "__main__":
             <ol>
                   <li><strong>核心条件达标：</strong>综合考量核心工业指标、RSI、价格与均线/通道关系、市场波动性等多个维度，需达到预设的触发数量（当前为至少4项）。这些指标现在基于考虑了信号历史的动态窗口进行计算。</li>
                   <li><strong>无信号阻断：</strong>排除近期不利价格形态或ATR通道超买（短期过热）的情况。</li>
+                  # --- Add interval rule description --- 
+                  <li><strong>满足采购间隔：</strong>距离上一次有效采购信号必须经过至少 {MIN_PURCHASE_INTERVAL} 个交易日。</li>
+                  # --- End interval rule description ---
             </ol>
-              """
-             }
+              """ # Correctly terminate the f-string here
+             } # Closing brace for the outer dictionary/logic block
 
             {today_interpretation_html if today_interpretation_html else "<p style='color:red;'>今日解读生成失败。</p>"}
         </div>
-    </div>
+    </div> # Removed the incorrect closing of body/html here
 </body>
 </html>
-"""
+""" # End of the final_html f-string assignment
 
+    # --- REMOVE the incorrect return statement --- 
+    # return final_html 
+    # --- End REMOVE ---
 
     # 7. 将完整的 HTML 写入文件 (主报告)
     output_filename = "index.html" 
     try:
         with open(output_filename, 'w', encoding='utf-8') as f:
             f.write(final_html)
-        print(f"成功将重构后的报告写入文件: {output_filename}")
+        print(f"报告已成功生成并保存到 '{output_filename}'")
     except Exception as e:
-        print(f"错误：写入重构后的 HTML 文件失败: {e}")
+        print(f"错误：将 HTML 写入文件时出错: {e}")
         traceback.print_exc()
-
-    # 8. 自动执行 Git 命令推送到 GitHub (保持不变)
-    print("尝试将更新推送到 GitHub...")
-    try:
-        # 检查是否有未提交的更改
-        status_result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True, check=True, encoding='utf-8')
-        if not status_result.stdout.strip():
-            print("没有检测到文件更改，无需推送。")
-        else:
-            print("检测到更改，开始执行 Git 命令...")
-            # 1. 添加所有更改
-            add_result = subprocess.run(['git', 'add', '.'], capture_output=True, text=True, check=True, encoding='utf-8')
-            print("Git 添加成功。")
-
-            # 2. 提交更改
-            commit_message = f"自动更新银价分析报告  - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            commit_result = subprocess.run(['git', 'commit', '-m', commit_message], capture_output=True, text=True, check=True, encoding='utf-8')
-            print("Git 提交成功。")
-
-            # 3. 获取当前分支名称
-            get_branch_result = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], capture_output=True, text=True, check=True, encoding='utf-8')
-            current_branch = get_branch_result.stdout.strip()
-            if not current_branch:
-                raise ValueError("无法获取当前 Git 分支名称。")
-            print(f"检测到当前分支为: {current_branch}")
-
-            # 4. 推送到远程仓库的当前分支 (无限重试，无等待)
-            push_attempt = 0
-            while True: # 无限循环直到成功
-                push_attempt += 1
-                try:
-                    print(f"尝试推送到 origin/{current_branch} (尝试 #{push_attempt})...")
-                    # 增加超时设置 (例如 60 秒) 防止单次尝试卡死
-                    push_result = subprocess.run(
-                        ['git', 'push', 'origin', current_branch],
-                        capture_output=True, text=True, check=True, encoding='utf-8', timeout=60
-                    )
-                    print("Git 推送成功。")
-                    break # 成功则跳出无限循环
-
-                except subprocess.TimeoutExpired:
-                    print(f"Git push 超时 (尝试 #{push_attempt})。将立即重试...")
-                    # 不等待，直接进入下一次循环
-
-                except subprocess.CalledProcessError as push_error:
-                    stderr_output = push_error.stderr.strip() if push_error.stderr else "无标准错误输出"
-                    print(f"Git push 失败 (尝试 #{push_attempt})。错误: {stderr_output}")
-                    # 根据错误判断是否应该停止重试 (可选，但推荐)
-                    if "Authentication failed" in stderr_output or "repository not found" in stderr_output or "fatal: repository" in stderr_output:
-                         print("检测到认证、仓库未找到或严重错误，停止重试。请手动检查配置。")
-                         # 这里可以选择抛出异常，让脚本知道推送最终失败
-                         raise RuntimeError(f"Git push failed due to configuration or permission issue: {stderr_output}")
-                         # 或者直接 break，让脚本继续往下执行（但不推荐，因为推送未完成）
-                         # break
-                    print("将立即重试...")
-                    # 不等待，直接进入下一次循环
-
-                except Exception as inner_e: # 捕捉推送过程中的其他意外错误
-                    print(f"推送过程中发生意外错误 (尝试 #{push_attempt}): {inner_e}")
-                    print("将立即重试...")
-                    # 不等待，直接进入下一次循环
-
-    # 处理 Git status/add/commit/rev-parse 阶段的错误
-    except subprocess.CalledProcessError as e:
-        cmd_str = ' '.join(e.cmd) if e.cmd else 'N/A'
-        print(f"Git 命令执行错误 (非推送阶段): {e}")
-        print(f"命令: {cmd_str}")
-        print(f"返回码: {e.returncode}")
-        if e.stderr:
-            print(f"错误输出: {e.stderr.strip()}")
-            # 保留之前的详细错误提示
-            if "Authentication failed" in e.stderr or "could not read Username" in e.stderr:
-                print("提示：Git 认证失败。请检查您的凭据（HTTPS token 或 SSH key）是否配置正确且有效。")
-            elif "repository not found" in e.stderr:
-                print("提示：远程仓库未找到。请检查仓库 URL 是否正确以及您是否有访问权限。")
-        elif e.stdout:
-             print(f"输出: {e.stdout.strip()}")
-
-    except FileNotFoundError:
-        print("错误：未找到 'git' 命令。请确保 Git 已安装并添加到系统 PATH。")
-    except Exception as e:
-        # 捕获 ValueError 或其他未知错误
-        print(f"执行 Git 命令或处理过程中发生未知错误: {e}")
-
-    print("\n分析完成。")
-
-
-# --- 定义：Pass 2 最终指标计算 ---
-
-
-
-
-
