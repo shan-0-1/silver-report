@@ -1090,7 +1090,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         <h3 title='{HOVER_TEXTS['3day_change'].replace('\"','&quot;')}'>📉 三日价格变化参考：</h3>
         <ul>
             <li>三日前 ({three_day_ago_date}) 价格：{three_day_ago_price:.2f}</li>
-            # --- Fix potential f-string issue by ensuring correct quotes/braces --- 
+   
             <li>三日价格变动：<span style="color:{'green' if three_day_diff >= 0 else 'red'};">{'+' if three_day_diff >= 0 else ''}{three_day_diff:.2f}</span></li>
         </ul>"""
     else:
@@ -1973,7 +1973,7 @@ if __name__ == "__main__":
         
         today_interpretation_html = f'''
             <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data.get('current_date', pd.Timestamp.now()).strftime('%Y-%m-%d')}) 的策略信号解读：</h3>
-            # --- Use the pre-calculated suggestion_html variable --- 
+     
             <p><strong>今日策略建议：{suggestion_html}</strong></p>
             <p><strong>分析概要：</strong></p>
             <ul>
