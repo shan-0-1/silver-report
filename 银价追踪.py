@@ -1090,106 +1090,107 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         <h3 title='{HOVER_TEXTS['3day_change'].replace('\"','&quot;')}'>📉 三日价格变化参考：</h3>
         <ul>
             <li>三日前 ({three_day_ago_date}) 价格：{three_day_ago_price:.2f}</li>
-            <li>三日价格变动：{'<span style="color:green;">+' if three_day_diff >= 0 else '<span style="color:red;">'}{three_day_diff:.2f}</span></li>
+            # --- Fix potential f-string issue by ensuring correct quotes/braces --- 
+            <li>三日价格变动：<span style="color:{'green' if three_day_diff >= 0 else 'red'};">{'+' if three_day_diff >= 0 else ''}{three_day_diff:.2f}</span></li>
         </ul>"""
     else:
          report_html += "<h3>📉 三日价格变化参考：数据不足</h3>"
 
-    # +++ 新增：近期 (252天) 成本效益分析 +++
+    # --- Re-introduce Recent (252 days) Cost-Benefit Analysis --- 
     N_DAYS_RECENT = 252
-    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析：</h3>"
+    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析：</h3>" 
 
     if len(df) >= N_DAYS_RECENT:
         df_recent = df.iloc[-N_DAYS_RECENT:].copy() # 获取最近 N 天数据副本
+        required_cols_recent = ['Price', '采购信号', '工业指标', '基线阈值_短', '基线阈值', '基线阈值_长']
+        missing_cols_recent = [col for col in required_cols_recent if col not in df_recent.columns]
 
-        # 确保需要的列存在
-        required_recent_cols = ['Price', '采购信号', '工业指标', '基线阈值_短', '基线阈值', '基线阈值_长']
-        missing_recent_cols = [col for col in required_recent_cols if col not in df_recent.columns]
-
-        if not missing_recent_cols:
-            # 计算近期市场平均价格
+        if not missing_cols_recent:
             avg_market_price_recent = safe_float(df_recent['Price'].mean())
-
-            recent_cost_analysis_html += f"<p>同期市场平均价格: {avg_market_price_recent:.2f} CNY</p>"
+            total_days_recent = N_DAYS_RECENT
+            recent_cost_analysis_html += f"<p>同期市场平均价格: {avg_market_price_recent:.2f} CNY ({total_days_recent} 天)</p>"
             recent_cost_analysis_html += "<ul style='list-style-type: none; padding-left: 0;'>"
+            results_recent = {}
 
-            results = {} # 存储不同策略的计算结果
-
-            # --- 1. 实际策略信号 ---
+            # --- 1. 实际策略信号 (Recent) ---
             strategy_purchases_recent = df_recent[df_recent['采购信号']]
-            strategy_points = len(strategy_purchases_recent)
-            if strategy_points > 0:
+            strategy_points_recent = len(strategy_purchases_recent)
+            if strategy_points_recent > 0:
                 avg_strategy_cost_recent = safe_float(strategy_purchases_recent['Price'].mean())
                 if avg_market_price_recent > 0:
                     advantage_rate = ((avg_market_price_recent - avg_strategy_cost_recent) / avg_market_price_recent) * 100
                     advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
                 else:
                     advantage_text = "N/A (市场均价为0)"
-                results['实际策略信号'] = (f"{avg_strategy_cost_recent:.2f}", advantage_text, strategy_points)
+                avg_interval_recent = total_days_recent / strategy_points_recent if strategy_points_recent > 0 else float('inf')
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
+                results_recent['实际策略信号'] = (f"{avg_strategy_cost_recent:.2f}", advantage_text, strategy_points_recent, avg_interval_recent_text)
             else:
-                results['实际策略信号'] = ("N/A", "无采购", 0)
+                results_recent['实际策略信号'] = ("N/A", "无采购", 0, "N/A")
 
-            # --- 2. 低于短期阈值 ---
-            short_thresh_buys = df_recent[df_recent['工业指标'] < df_recent['基线阈值_短']]
-            short_points = len(short_thresh_buys)
-            if short_points > 0:
-                avg_short_thresh_cost = safe_float(short_thresh_buys['Price'].mean())
+            # --- 2. 低于短期阈值 (Recent) ---
+            short_thresh_buys_recent = df_recent[df_recent['工业指标'] < df_recent['基线阈值_短']]
+            short_points_recent = len(short_thresh_buys_recent)
+            if short_points_recent > 0:
+                avg_short_thresh_cost_recent = safe_float(short_thresh_buys_recent['Price'].mean())
                 if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_short_thresh_cost) / avg_market_price_recent) * 100
+                    advantage_rate = ((avg_market_price_recent - avg_short_thresh_cost_recent) / avg_market_price_recent) * 100
                     advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
                 else:
                     advantage_text = "N/A (市场均价为0)"
-                results['低于短期阈值'] = (f"{avg_short_thresh_cost:.2f}", advantage_text, short_points)
+                avg_interval_recent = total_days_recent / short_points_recent if short_points_recent > 0 else float('inf')
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
+                results_recent['低于短期阈值'] = (f"{avg_short_thresh_cost_recent:.2f}", advantage_text, short_points_recent, avg_interval_recent_text)
             else:
-                 results['低于短期阈值'] = ("N/A", "无触发", 0)
+                results_recent['低于短期阈值'] = ("N/A", "无触发", 0, "N/A")
 
-            # --- 3. 低于中期阈值 ---
-            mid_thresh_buys = df_recent[df_recent['工业指标'] < df_recent['基线阈值']]
-            mid_points = len(mid_thresh_buys)
-            if mid_points > 0:
-                avg_mid_thresh_cost = safe_float(mid_thresh_buys['Price'].mean())
+            # --- 3. 低于中期阈值 (Recent) ---
+            mid_thresh_buys_recent = df_recent[df_recent['工业指标'] < df_recent['基线阈值']]
+            mid_points_recent = len(mid_thresh_buys_recent)
+            if mid_points_recent > 0:
+                avg_mid_thresh_cost_recent = safe_float(mid_thresh_buys_recent['Price'].mean())
                 if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_mid_thresh_cost) / avg_market_price_recent) * 100
+                    advantage_rate = ((avg_market_price_recent - avg_mid_thresh_cost_recent) / avg_market_price_recent) * 100
                     advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
                 else:
                     advantage_text = "N/A (市场均价为0)"
-                results['低于中期阈值'] = (f"{avg_mid_thresh_cost:.2f}", advantage_text, mid_points)
+                avg_interval_recent = total_days_recent / mid_points_recent if mid_points_recent > 0 else float('inf')
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
+                results_recent['低于中期阈值'] = (f"{avg_mid_thresh_cost_recent:.2f}", advantage_text, mid_points_recent, avg_interval_recent_text)
             else:
-                results['低于中期阈值'] = ("N/A", "无触发", 0)
+                results_recent['低于中期阈值'] = ("N/A", "无触发", 0, "N/A")
 
-            # --- 4. 低于长期阈值 ---
-            long_thresh_buys = df_recent[df_recent['工业指标'] < df_recent['基线阈值_长']]
-            long_points = len(long_thresh_buys)
-            if long_points > 0:
-                avg_long_thresh_cost = safe_float(long_thresh_buys['Price'].mean())
+            # --- 4. 低于长期阈值 (Recent) ---
+            long_thresh_buys_recent = df_recent[df_recent['工业指标'] < df_recent['基线阈值_长']]
+            long_points_recent = len(long_thresh_buys_recent)
+            if long_points_recent > 0:
+                avg_long_thresh_cost_recent = safe_float(long_thresh_buys_recent['Price'].mean())
                 if avg_market_price_recent > 0:
-                    advantage_rate = ((avg_market_price_recent - avg_long_thresh_cost) / avg_market_price_recent) * 100
+                    advantage_rate = ((avg_market_price_recent - avg_long_thresh_cost_recent) / avg_market_price_recent) * 100
                     advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>"
                 else:
                     advantage_text = "N/A (市场均价为0)"
-                results['低于长期阈值'] = (f"{avg_long_thresh_cost:.2f}", advantage_text, long_points)
+                avg_interval_recent = total_days_recent / long_points_recent if long_points_recent > 0 else float('inf')
+                avg_interval_recent_text = f"{avg_interval_recent:.1f}" if avg_interval_recent != float('inf') else "N/A"
+                results_recent['低于长期阈值'] = (f"{avg_long_thresh_cost_recent:.2f}", advantage_text, long_points_recent, avg_interval_recent_text)
             else:
-                results['低于长期阈值'] = ("N/A", "无触发", 0)
+                results_recent['低于长期阈值'] = ("N/A", "无触发", 0, "N/A")
 
-            # 构建 HTML 表格展示结果
+            # 构建 HTML 表格 (Recent)
             recent_cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
-            # --- Add hover annotation to the average cost column header --- 
-            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th title='计算: 在指定周期内，每次触发相应条件时买入的价格的算术平均值。'>近期平均采购成本 (CNY)</th><th>相对市场均价优势率</th></tr></thead><tbody>"
-            # --- End hover annotation addition ---
-            for name, (cost, adv_rate, points) in results.items():
-                  # 为优势率添加悬停解释
-                  adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
-                  recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
+            recent_cost_analysis_html += "<thead><tr><th>触发条件</th><th>近期触发次数</th><th title='计算: 在指定周期内，每次触发相应条件时买入的价格的算术平均值。'>近期平均采购成本 (CNY)</th><th title='计算: 周期总天数 / 触发次数。表示平均多少天触发一次采购条件。'>平均间隔天数</th><th>相对市场均价优势率</th></tr></thead><tbody>"
+            for name, (cost, adv_rate, points, interval_text) in results_recent.items():
+                 adv_title = "计算: (市场均价 - 平均采购成本) / 市场均价 * 100%. 正值表示成本低于市场均价。" if adv_rate != "N/A (市场均价为0)" and adv_rate != "无采购" and adv_rate != "无触发" else ""
+                 recent_cost_analysis_html += f"<tr><td>{name}</td><td>{points}</td><td>{cost}</td><td>{interval_text}</td><td title='{adv_title}'>{adv_rate}</td></tr>"
             recent_cost_analysis_html += "</tbody></table>"
-
         else:
-            recent_cost_analysis_html += f"<p><em>无法进行分析：缺少必要的列 ({', '.join(missing_recent_cols)})</em></p>"
+            recent_cost_analysis_html += f"<p><em>无法进行近期分析：缺少必要的列 ({', '.join(missing_cols_recent)})</em></p>"
     else:
         recent_cost_analysis_html += f"<p><em>数据不足 ({len(df)} 天)，无法进行 {N_DAYS_RECENT} 天成本效益分析。</em></p>"
+    recent_cost_analysis_html += "</ul>"
+    # --- End Re-introduced Recent Analysis ---
 
-    recent_cost_analysis_html += "</ul>" # 结束无序列表（虽然现在是表格）
-    # +++ 结束新增计算 +++
-
+    # Append the recent analysis HTML to the main report HTML
     report_html += recent_cost_analysis_html
 
     # +++ 全周期成本效益分析 +++
@@ -1963,29 +1964,43 @@ if __name__ == "__main__":
     # --- 6.1 预先构建动态"今日解读"部分的 HTML --- Check if analysis_data exists
     today_interpretation_html = '<p>今日解读数据不可用。</p>' # Default message
     if analysis_data:
-        # --- Corrected Indentation Starts Here ---
+        # --- Fix syntax error by pre-calculating the suggestion HTML --- 
+        suggestion_html = ''
+        if analysis_data.get('signal', False):
+            suggestion_html = '<span style="color:green; font-weight:bold;">建议采购 ({})</span>'.format(analysis_data.get('signal_strength', ''))
+        else:
+            suggestion_html = '<span style="color:orange; font-weight:bold;">建议持币观望</span>'
+        
         today_interpretation_html = f'''
             <h3 style="background-color: #f0f0f0; padding: 10px; border-left: 5px solid #007bff;">💡 对今天 ({analysis_data.get('current_date', pd.Timestamp.now()).strftime('%Y-%m-%d')}) 的策略信号解读：</h3>
-            <p><strong>今日策略建议：{'<span style="color:green; font-weight:bold;">建议采购 ({})</span>'.format(analysis_data.get('signal_strength', '')) if analysis_data.get('signal', False) else '<span style="color:orange; font-weight:bold;">建议持币观望</span>'}</strong></p>
+            # --- Use the pre-calculated suggestion_html variable --- 
+            <p><strong>今日策略建议：{suggestion_html}</strong></p>
             <p><strong>分析概要：</strong></p>
             <ul>
                 <li>核心条件满足数量：<strong>{analysis_data.get('condition_scores', 'N/A')} / 6</strong> (策略要求至少满足 4 项)。</li>
-                <li>信号阻断检查：{analysis_data.get('peak_status_display', 'N/A')} 且 {analysis_data.get('interval_check_text', 'N/A')}。</li>
-            </ul> 
-        ''' # End initial f-string assignment, but building continues
+                <li>信号阻断检查：{analysis_data.get('peak_status_display', 'N/A')}。</li>
+            </ul>
+        '''
 
         if analysis_data.get('signal', False):
             # Build HTML for signal True case
+            # --- Fix f-string syntax: Use pre-calculated aux_condition_html --- 
+            aux_condition_html = ''
+            score = analysis_data.get('condition_scores', 0)
+            if score > 2:
+                 aux_condition_html = f'<li>其余 {score - 2} 项辅助条件也满足要求。</li>'
+                 
             today_interpretation_html += f'''
             <li>关键指标状态：
                 <ul>
                     <li>核心工业指标: {analysis_data.get('indicator_diff_desc', 'N/A')}。</li>
                     <li>市场动量 (RSI): {analysis_data.get('rsi_diff_desc', 'N/A')}。</li>
-                    {'<li>其余 {} 项辅助条件也满足要求。</li>'.format(analysis_data.get('condition_scores', 0) - 2) if analysis_data.get('condition_scores', 0) > 2 else ''}
+                    {aux_condition_html} 
                 </ul>
             </li>
-            <li><strong>结论：</strong><span style="color:green;">由于关键买入指标进入策略目标区域，满足了 {analysis_data.get('condition_scores', 'N/A')} 项核心条件，并且无明确的信号阻断因素（如价格形态不利、短期过热或间隔过短），策略判定当前形成 <strong>{analysis_data.get('signal_strength', '边缘')}</strong> 的采购信号。</span></li>
-            '''
+            <li><strong>结论：</strong><span style="color:green;">由于关键买入指标进入策略目标区域，满足了 {analysis_data.get('condition_scores', 'N/A')} 项核心条件，并且无明确的信号阻断因素（如价格形态不利、短期过热），策略判定当前形成 <strong>{analysis_data.get('signal_strength', '边缘')}</strong> 的采购信号。</span></li>
+            ''' # End the f-string block
+            # --- 结束修正 ---
         else: # 如果是观望
             # Build HTML for signal False case
             unmet_conditions_list = ''
