@@ -350,7 +350,7 @@ HISTORY_WINDOW = HISTORY_WINDOW_SHORT * 2
 HISTORY_WINDOW_LONG = HISTORY_WINDOW * 2
 
 # --- 新增: 策略条件和过滤器开关 ---
-USE_CORE_COND_1 = 0  # 工业指标 < 基线阈值
+USE_CORE_COND_1 = 1  # 工业指标 < 基线阈值
 USE_CORE_COND_2 = 1  # 修正RSI < rsi_threshold
 USE_CORE_COND_3 = 1  # Price < EMA21
 USE_CORE_COND_4 = 1  # Price < 布林下轨 * 1.05
@@ -361,7 +361,7 @@ USE_PEAK_FILTER = 1  # 是否应用 peak_filter
 
 # --- 重要: 最小条件数设置 ---
 # 注意：如果关闭了某些条件，可能需要手动调整此值，或采用下面的动态计算逻辑
-MIN_CONDITIONS_REQUIRED = 3
+MIN_CONDITIONS_REQUIRED = 5
 # 动态计算示例 (可选，如果需要根据激活的条件自动调整):
 # active_conditions_count = sum([USE_CORE_COND_1, USE_CORE_COND_2, USE_CORE_COND_3, USE_CORE_COND_4, USE_CORE_COND_5, USE_CORE_COND_6])
 # MIN_CONDITIONS_REQUIRED = max(1, int(active_conditions_count * 0.66)) # 例如，要求满足激活条件的 2/3
