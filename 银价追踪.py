@@ -877,7 +877,11 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
     price = safe_float(current['Price'])
     indicator = safe_float(current['工业指标']) # "工业指标"是本策略的核心，衡量价格相对历史均值和波动性的位置
-    threshold = safe_float(current['基线阈值']) # "基线阈值"是工业指标的动态门槛，低于此值表明价格可能偏低
+    # --- 新增: 提取短/中/长期阈值 ---
+    threshold = safe_float(current['基线阈值']) # 中期阈值
+    threshold_short = safe_float(current.get('基线阈值_短', threshold), default=threshold) # 短期阈值, 使用中期作为 fallback
+    threshold_long = safe_float(current.get('基线阈值_长', threshold), default=threshold) # 长期阈值, 使用中期作为 fallback
+    # --- 结束新增 ---
     short_sma = safe_float(current['SMA动态短'], default=price) # 短期移动平均线，反映近期价格趋势
     long_sma = safe_float(current.get('SMA动态长', price), default=price) # 长期移动平均线 (报告中未直接显示，但用于计算工业指标)
     volatility = safe_float(current['动量因子']) # "动量因子"衡量价格波动的剧烈程度，低波动有时是买入时机
@@ -903,8 +907,12 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     HOVER_TEXTS = {
         'price': "从数据源获取的每日收盘价。",
         'indicator': "计算思路: (价格/短期均线) * (价格/长期均线) * (1 - 动量因子)。综合衡量价格位置和波动性。",
-        # --- 修改：在描述中加入 quantile 参数 --- 
+        # --- 修改：在描述中加入 quantile 参数 ---
         'threshold': f"计算思路: 最近 {HISTORY_WINDOW} 天工业指标的 {optimized_quantile*100:.0f}% 分位数。是工业指标的动态买入参考线。",
+        # --- 新增: 短期和长期阈值的悬停提示 (如果需要在其他地方使用) ---
+        'threshold_short': f"计算思路: 最近 {HISTORY_WINDOW_SHORT} 天工业指标的 {optimized_quantile*100:.0f}% 分位数。",
+        'threshold_long': f"计算思路: 最近 {HISTORY_WINDOW_LONG} 天工业指标的 {optimized_quantile*100:.0f}% 分位数。",
+        # --- 结束新增 ---
         'signal': "综合所有核心条件和阻断规则得出的最终建议。",
         'dynamic_window': f"计算思路: 基准窗口({BASE_WINDOW_SHORT}/{BASE_WINDOW_LONG}天)根据距离上次购买天数进行衰减({WINDOW_DECAY_RATE}率)，最短{MIN_WINDOW_SHORT}天。距离越久，窗口越短，越灵敏。",
         'price_trend': "计算思路: (当前价格 / 短期动态均线 - 1) * 100%。表示价格偏离近期平均成本的程度。",
@@ -925,6 +933,22 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         'ema_crossover': "基于 EMA9 和 EMA21 的直接相对位置。金叉状态 (EMA9 > EMA21) 通常视为看涨倾向，死叉状态 (EMA9 < EMA21) 通常视为看跌倾向。图表上的标记 (↑/↓) 显示精确的交叉点。" # Explanation for EMA crossover
     }
 
+    # --- 预计算建议字符串以修复 f-string 语法错误 ---
+    suggestion_html = ''
+    if current['采购信号']:
+        suggestion_html = '<span style="color:green; font-weight:bold;">立即采购</span>'
+    else:
+        base_suggestion = '<span style="color:orange; font-weight:bold;">持币观望</span>'
+        below_thresholds = []
+        if indicator < threshold_short: below_thresholds.append("短期")
+        if indicator < threshold: below_thresholds.append("中期") # threshold is medium
+        if indicator < threshold_long: below_thresholds.append("长期")
+        threshold_note = ""
+        if below_thresholds:
+            threshold_note = f' <span style="font-size: smaller; color: #555;">(但低于{"/".join(below_thresholds)}阈值)</span>'
+        suggestion_html = base_suggestion + threshold_note
+    # --- 结束预计算 ---
+
     # --- 构建 HTML 报告字符串 (加入参数显示) ---
     report_html = f"""
     <div style="font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: auto; padding: 20px; border: 1px solid #eee; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
@@ -934,8 +958,9 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         <p><strong title='{HOVER_TEXTS['price']}'>当前价格：</strong>{price:.2f} CNY</p>
         <p><strong title='{HOVER_TEXTS['indicator']}'>核心指标（工业指标）：</strong>{indicator:.2f} <span title='{HOVER_TEXTS['threshold']}'>（买入参考阈值：低于 {threshold:.2f}）</span></p>
 
-
-        <h3 title='{HOVER_TEXTS['signal']}'>🛒 今日建议：{'<span style="color:green; font-weight:bold;">立即采购</span>' if current['采购信号'] else '<span style="color:orange; font-weight:bold;">持币观望</span>'}</h3>
+     
+        <h3 title='{HOVER_TEXTS['signal']}'>🛒 今日建议：{suggestion_html}</h3>
+   
         <p><em>（此建议基于以下综合分析，需至少满足4个核心条件且无阻断信号）</em></p>
 
         <h3>策略状态：</h3>
@@ -1875,7 +1900,7 @@ def analyze_post_purchase_performance(df_results, periods=[5, 10, 20]):
     # 2. 识别买入点
     strategy_buy_indices = df.index[df['采购信号']]
 
-    # 模拟“低于长期阈值”买入信号
+    # 模拟"低于长期阈值"买入信号
     if '工业指标' in df.columns and '基线阈值_长' in df.columns:
         long_threshold_signal = df['工业指标'] < df['基线阈值_长']
         long_threshold_buy_indices = df.index[long_threshold_signal]
