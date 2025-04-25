@@ -230,41 +230,84 @@ def generate_final_signals(df_final_metrics, rsi_threshold):
 
     # Final core conditions using FINAL metrics
     try:
-        core_conditions = [
-            df_processed['工业指标'] < df_processed['基线阈值'], # Use final
-            df_processed['修正RSI'] < rsi_threshold,
-            df_processed['Price'] < df_processed['EMA21'],
-            df_processed['Price'] < df_processed['布林下轨'] * 1.05, # Use final
-            # --- 修正：使用最终的 ema_ratio 和 dynamic_ema_threshold ---
-            df_processed['ema_ratio'] > df_processed['dynamic_ema_threshold'], # Use final
-            # --- 结束修正 ---
-            df_processed['动量因子'] < df_processed['低波动阈值'] # Use final
-        ]
+        # --- 修改: 根据开关动态构建核心条件列表 ---
+        all_conditions = {
+            1: df_processed['工业指标'] < df_processed['基线阈值'], # Use final
+            2: df_processed['修正RSI'] < rsi_threshold,
+            3: df_processed['Price'] < df_processed['EMA21'],
+            4: df_processed['Price'] < df_processed['布林下轨'] * 1.05, # Use final
+            5: df_processed['ema_ratio'] > df_processed['dynamic_ema_threshold'], # Use final
+            6: df_processed['动量因子'] < df_processed['低波动阈值'] # Use final
+        }
+        switches = {
+            1: USE_CORE_COND_1, 2: USE_CORE_COND_2, 3: USE_CORE_COND_3,
+            4: USE_CORE_COND_4, 5: USE_CORE_COND_5, 6: USE_CORE_COND_6
+        }
 
-        # Ensure boolean type (same check as before)
-        for i, cond in enumerate(core_conditions):
-            if not pd.api.types.is_bool_dtype(cond):
-                core_conditions[i] = pd.to_numeric(cond, errors='coerce').fillna(0).astype(bool)
+        active_core_conditions = []
+        # --- 修改: 同时记录激活的条件编号，用于报告 ---
+        active_condition_indices = []
+        for i in range(1, 7):
+            if switches[i]: # Only add if switch is True
+                condition_series = all_conditions[i]
+                # --- 修正: 在加入 active_core_conditions 之前就存储条件结果 ---
+                # 确保即使条件未激活，相应的 'core_condX_met' 列也被设置为 False
+                if not pd.api.types.is_bool_dtype(condition_series):
+                     condition_series = pd.to_numeric(condition_series, errors='coerce').fillna(0).astype(bool)
+                df_processed[f'core_cond{i}_met'] = condition_series
+                active_core_conditions.append(condition_series)
+                active_condition_indices.append(i)
+            else:
+                # --- 新增: 如果条件未激活，则将其 met 状态设为 False ---
+                df_processed[f'core_cond{i}_met'] = pd.Series([False] * len(df_processed))
+                # --- 结束新增 ---
+        # --- 结束修改 ---
 
-        # --- 新增: 存储每个条件的结果以便报告 ---
-        for i, cond in enumerate(core_conditions, 1):
-            df_processed[f'core_cond{i}_met'] = cond
-        # --- 结束新增 ---
+        # Ensure boolean type for active conditions (though done above now)
+        # for i, cond in enumerate(active_core_conditions):
+        #     if not pd.api.types.is_bool_dtype(cond):
+        #         active_core_conditions[i] = pd.to_numeric(cond, errors='coerce').fillna(0).astype(bool)
 
-        base_pass = np.sum(core_conditions, axis=0) >= 4 # Default requirement
+        # --- REMOVED redundant storage of condition results ---
+        # # --- 新增: 存储每个激活条件的结果以便报告 ---
+        # for idx, cond in zip(active_condition_indices, active_core_conditions):
+        #     df_processed[f'core_cond{idx}_met'] = cond
+        # # --- 结束新增 ---
+        # --- END REMOVAL ---
+
+        # --- 修改: 基于激活的条件和 MIN_CONDITIONS_REQUIRED 计算 base_pass ---
+        active_conditions_count = len(active_core_conditions)
+        if active_conditions_count == 0:
+             base_pass = pd.Series([False] * len(df_processed)) # No active conditions, always False
+        elif active_conditions_count < MIN_CONDITIONS_REQUIRED:
+            # 如果激活的条件数少于要求的最小数，则永远无法满足
+            base_pass = pd.Series([False] * len(df_processed))
+            print(f"警告 (Pass 2): 激活的核心条件数 ({active_conditions_count}) 少于要求的最小条件数 ({MIN_CONDITIONS_REQUIRED})，最终信号将始终为 False。")
+        else:
+             # 计算满足激活条件的数量是否达到要求
+            base_pass = np.sum(active_core_conditions, axis=0) >= MIN_CONDITIONS_REQUIRED
+        # --- 结束修改 ---
+
 
         # Remove the DEBUG block here
-        # print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_final_signals (Pass 2) ---")
+        # print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_final_signals (Pass 2) ---\")
         # ... (removed print loop) ...
-        # print("--- END DEBUG ---\n")
+        # print("--- END DEBUG ---\\n\")
 
-        # Apply peak filter (using final ATR bands by passing column names)
-        peak_filter_result = peak_filter(df_processed, upper_col='波动上轨', lower_col='波动下轨')
-        if not pd.api.types.is_bool_dtype(peak_filter_result):
-             peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
+        # --- 修改: 根据 USE_PEAK_FILTER 开关决定是否应用过滤器 ---
+        if USE_PEAK_FILTER:
+            # Apply peak filter (using final ATR bands by passing column names)
+            peak_filter_result = peak_filter(df_processed, upper_col='波动上轨', lower_col='波动下轨')
+            if not pd.api.types.is_bool_dtype(peak_filter_result):
+                 peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
 
-        # Generate final unprocessed signal
-        df_processed['采购信号'] = base_pass & peak_filter_result
+            # Generate final unprocessed signal
+            df_processed['采购信号'] = base_pass & peak_filter_result
+        else:
+             # 如果不使用 peak filter，最终信号直接等于 base_pass
+             df_processed['采购信号'] = base_pass
+             print("提示 (Pass 2): peak_filter 已禁用，最终信号仅基于核心条件。")
+        # --- 结束修改 ---
 
     except Exception as e:
         print(f"生成最终信号时出错: {e}")
@@ -274,8 +317,7 @@ def generate_final_signals(df_final_metrics, rsi_threshold):
         for i in range(1, 7):
             df_processed[f'core_cond{i}_met'] = False
 
-    # --- Clean up temporary peak_filter columns (no longer needed) ---
-    # df_processed = df_processed.drop(columns=['filter_atr_upper', 'filter_atr_lower'], errors='ignore')
+    # --- Clean up temporary peak_filter columns (no longer needed) ---\
 
     return df_processed
 # --- 结束定义 ---
@@ -300,6 +342,25 @@ WINDOW_DECAY_RATE = 0.97
 HISTORY_WINDOW_SHORT = 24
 HISTORY_WINDOW = HISTORY_WINDOW_SHORT * 2
 HISTORY_WINDOW_LONG = HISTORY_WINDOW * 2
+
+# --- 新增: 策略条件和过滤器开关 ---
+USE_CORE_COND_1 = 1  # 工业指标 < 基线阈值
+USE_CORE_COND_2 = 1  # 修正RSI < rsi_threshold
+USE_CORE_COND_3 = 1  # Price < EMA21
+USE_CORE_COND_4 = 1  # Price < 布林下轨 * 1.05
+USE_CORE_COND_5 = 1  # ema_ratio > dynamic_ema_threshold
+USE_CORE_COND_6 = 1  # 动量因子 < 低波动阈值
+USE_PEAK_FILTER = 1  # 是否应用 peak_filter
+# --- 结束开关定义 ---
+
+# --- 重要: 最小条件数设置 ---
+# 注意：如果关闭了某些条件，可能需要手动调整此值，或采用下面的动态计算逻辑
+MIN_CONDITIONS_REQUIRED = 4
+# 动态计算示例 (可选，如果需要根据激活的条件自动调整):
+# active_conditions_count = sum([USE_CORE_COND_1, USE_CORE_COND_2, USE_CORE_COND_3, USE_CORE_COND_4, USE_CORE_COND_5, USE_CORE_COND_6])
+# MIN_CONDITIONS_REQUIRED = max(1, int(active_conditions_count * 0.66)) # 例如，要求满足激活条件的 2/3
+
+# --- 结束最小条件数设置 ---
 
 
 def load_silver_data():
@@ -744,37 +805,64 @@ def generate_signals(df_pass1, rsi_threshold): # Pass 1: Generate preliminary si
 
     # Preliminary core conditions using Pass 1 metrics
     try:
-        core_conditions = [
-            df_processed['工业指标_initial'] < df_processed['基线阈值_initial'],
-            df_processed['修正RSI'] < rsi_threshold,
-            df_processed['Price'] < df_processed['EMA21'],
-            df_processed['Price'] < df_processed['布林下轨'] * 1.05, # Uses fixed momentum band
-            df_processed['ema_ratio'] > df_processed['dynamic_ema_threshold'], # Uses fixed momentum
-            df_processed['动量因子_fixed'] < df_processed['低波动阈值'] # Use fixed momentum
-        ]
+        # --- 修改: 根据开关动态构建核心条件列表 ---
+        all_conditions_pass1 = {
+            1: df_processed['工业指标_initial'] < df_processed['基线阈值_initial'],
+            2: df_processed['修正RSI'] < rsi_threshold,
+            3: df_processed['Price'] < df_processed['EMA21'],
+            4: df_processed['Price'] < df_processed['布林下轨'] * 1.05, # Uses fixed momentum band
+            5: df_processed['ema_ratio'] > df_processed['dynamic_ema_threshold'], # Uses fixed momentum
+            6: df_processed['动量因子_fixed'] < df_processed['低波动阈值'] # Use fixed momentum
+        }
+        switches_pass1 = {
+            1: USE_CORE_COND_1, 2: USE_CORE_COND_2, 3: USE_CORE_COND_3,
+            4: USE_CORE_COND_4, 5: USE_CORE_COND_5, 6: USE_CORE_COND_6
+        }
 
-        # 确保所有条件都是布尔系列
+        active_core_conditions_pass1 = []
+        for i in range(1, 7):
+            if switches_pass1[i]: # Only add if switch is True
+                active_core_conditions_pass1.append(all_conditions_pass1[i])
+        # --- 结束修改 ---
+
+        # 确保所有激活的条件都是布尔系列
         # --- 添加缩进 --- Check boolean type
-        for i, cond in enumerate(core_conditions):
+        for i, cond in enumerate(active_core_conditions_pass1):
             if not pd.api.types.is_bool_dtype(cond):
                  # 尝试转换，如果失败则设为 False Convert to numeric, fill NaN, convert to bool
-                 core_conditions[i] = pd.to_numeric(cond, errors='coerce').fillna(0).astype(bool)
+                 active_core_conditions_pass1[i] = pd.to_numeric(cond, errors='coerce').fillna(0).astype(bool)
 
-        # --- 添加缩进 --- Calculate base pass
-        base_pass = np.sum(core_conditions, axis=0) >= 4 # Default requirement
-        # 确保 peak_filter 返回布尔系列
+        # --- 修改: 基于激活的条件和 MIN_CONDITIONS_REQUIRED 计算 base_pass ---
+        active_conditions_count_pass1 = len(active_core_conditions_pass1)
+        if active_conditions_count_pass1 == 0:
+            base_pass = pd.Series([False] * len(df_processed)) # No active conditions, always False
+        elif active_conditions_count_pass1 < MIN_CONDITIONS_REQUIRED:
+             # 如果激活的条件数少于要求的最小数，则永远无法满足
+             base_pass = pd.Series([False] * len(df_processed))
+             print(f"警告 (Pass 1): 激活的核心条件数 ({active_conditions_count_pass1}) 少于要求的最小条件数 ({MIN_CONDITIONS_REQUIRED})，初步信号将始终为 False。")
+        else:
+             # 计算满足激活条件的数量是否达到要求
+             base_pass = np.sum(active_core_conditions_pass1, axis=0) >= MIN_CONDITIONS_REQUIRED
+        # --- 结束修改 ---
+
         # Remove the DEBUG block here
-        # print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_signals (Pass 1) ---")
+        # print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_signals (Pass 1) ---\")
         # ... (removed print loop) ...
-        # print("--- END DEBUG ---\n")
+        # print("--- END DEBUG ---\\n\")
 
-        # Pass fixed column names to peak_filter
-        peak_filter_result = peak_filter(df_processed, upper_col='波动上轨_fixed', lower_col='波动下轨_fixed')
-        if not pd.api.types.is_bool_dtype(peak_filter_result):
-             peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
-
-        # --- 添加缩进 --- Generate preliminary signal
-        df_processed['preliminary_signal'] = base_pass & peak_filter_result
+        # --- 修改: 根据 USE_PEAK_FILTER 开关决定是否应用过滤器 ---
+        if USE_PEAK_FILTER:
+            # Pass fixed column names to peak_filter
+            peak_filter_result = peak_filter(df_processed, upper_col='波动上轨_fixed', lower_col='波动下轨_fixed')
+            if not pd.api.types.is_bool_dtype(peak_filter_result):
+                 peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
+            # --- 添加缩进 --- Generate preliminary signal
+            df_processed['preliminary_signal'] = base_pass & peak_filter_result
+        else:
+            # 如果不使用 peak filter，初步信号直接等于 base_pass
+            df_processed['preliminary_signal'] = base_pass
+            print("提示 (Pass 1): peak_filter 已禁用，初步信号仅基于核心条件。")
+        # --- 结束修改 ---
 
     except Exception as e:
         # --- 添加缩进 --- Print error
