@@ -361,7 +361,7 @@ USE_PEAK_FILTER = 1  # 是否应用 peak_filter
 
 # --- 重要: 最小条件数设置 ---
 # 注意：如果关闭了某些条件，可能需要手动调整此值，或采用下面的动态计算逻辑
-MIN_CONDITIONS_REQUIRED = 4
+MIN_CONDITIONS_REQUIRED = 3
 # 动态计算示例 (可选，如果需要根据激活的条件自动调整):
 # active_conditions_count = sum([USE_CORE_COND_1, USE_CORE_COND_2, USE_CORE_COND_3, USE_CORE_COND_4, USE_CORE_COND_5, USE_CORE_COND_6])
 # MIN_CONDITIONS_REQUIRED = max(1, int(active_conditions_count * 0.66)) # 例如，要求满足激活条件的 2/3
