@@ -11,6 +11,12 @@ import datetime # 用于生成提交信息时间戳
 #import optuna  <--- 新增: 导入 Optuna
 import traceback # <--- 新增：用于打印详细错误信息
 
+# --- 设置随机种子以保证可复现性 ---
+import random
+np.random.seed(42)
+random.seed(42)
+# --- 结束设置随机种子 ---
+
 def calculate_final_metrics(df_pass1_output, baseline_quantile):
     """
     Pass 2: Calculate final metrics using correct dynamic windows based on preliminary signals.
@@ -347,7 +353,7 @@ HISTORY_WINDOW_LONG = HISTORY_WINDOW * 2
 USE_CORE_COND_1 = 0  # 工业指标 < 基线阈值
 USE_CORE_COND_2 = 0  # 修正RSI < rsi_threshold
 USE_CORE_COND_3 = 0  # Price < EMA21
-USE_CORE_COND_4 = 0  # Price < 布林下轨 * 1.05
+USE_CORE_COND_4 = 1  # Price < 布林下轨 * 1.05
 USE_CORE_COND_5 = 1  # ema_ratio > dynamic_ema_threshold
 USE_CORE_COND_6 = 1  # 动量因子 < 低波动阈值
 USE_PEAK_FILTER = 1  # 是否应用 peak_filter
@@ -355,7 +361,7 @@ USE_PEAK_FILTER = 1  # 是否应用 peak_filter
 
 # --- 重要: 最小条件数设置 ---
 # 注意：如果关闭了某些条件，可能需要手动调整此值，或采用下面的动态计算逻辑
-MIN_CONDITIONS_REQUIRED = 2
+MIN_CONDITIONS_REQUIRED = 3
 # 动态计算示例 (可选，如果需要根据激活的条件自动调整):
 # active_conditions_count = sum([USE_CORE_COND_1, USE_CORE_COND_2, USE_CORE_COND_3, USE_CORE_COND_4, USE_CORE_COND_5, USE_CORE_COND_6])
 # MIN_CONDITIONS_REQUIRED = max(1, int(active_conditions_count * 0.66)) # 例如，要求满足激活条件的 2/3
