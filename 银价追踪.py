@@ -350,7 +350,7 @@ USE_CORE_COND_3 = 1  # Price < EMA21
 USE_CORE_COND_4 = 1  # Price < 布林下轨 * 1.05
 USE_CORE_COND_5 = 1  # ema_ratio > dynamic_ema_threshold
 USE_CORE_COND_6 = 1  # 动量因子 < 低波动阈值
-USE_PEAK_FILTER = 1  # 是否应用 peak_filter
+USE_PEAK_FILTER = 0  # 是否应用 peak_filter
 # --- 结束开关定义 ---
 
 # --- 重要: 最小条件数设置 ---
