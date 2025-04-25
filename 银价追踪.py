@@ -350,7 +350,7 @@ HISTORY_WINDOW = HISTORY_WINDOW_SHORT * 2
 HISTORY_WINDOW_LONG = HISTORY_WINDOW * 2
 
 # --- 新增: 策略条件和过滤器开关 ---
-USE_CORE_COND_1 = 1  # 工业指标 < 基线阈值
+USE_CORE_COND_1 = 0  # 工业指标 < 基线阈值
 USE_CORE_COND_2 = 1  # 修正RSI < rsi_threshold
 USE_CORE_COND_3 = 1  # Price < EMA21
 USE_CORE_COND_4 = 1  # Price < 布林下轨 * 1.05
