@@ -265,7 +265,7 @@ def generate_final_signals(df_final_metrics, rsi_threshold):
             else:
                 # --- 新增: 如果条件未激活，则将其 met 状态设为 False ---
                 df_processed[f'core_cond{i}_met'] = pd.Series([False] * len(df_processed))
-                # --- 结束新增 ---
+        # --- 结束新增 ---
         # --- 结束修改 ---
 
         # Ensure boolean type for active conditions (though done above now)
@@ -293,24 +293,25 @@ def generate_final_signals(df_final_metrics, rsi_threshold):
             base_pass = np.sum(active_core_conditions, axis=0) >= MIN_CONDITIONS_REQUIRED
         # --- 结束修改 ---
 
-
+        
         # Remove the DEBUG block here
         # print("\n--- DEBUG: Checking filter_atr_* columns before calling peak_filter in generate_final_signals (Pass 2) ---\")
         # ... (removed print loop) ...
         # print("--- END DEBUG ---\\n\")
-
+        
         # --- 修改: 根据 USE_PEAK_FILTER 开关决定是否应用过滤器 ---
         if USE_PEAK_FILTER:
             # Apply peak filter (using final ATR bands by passing column names)
             peak_filter_result = peak_filter(df_processed, upper_col='波动上轨', lower_col='波动下轨')
+            # --- Fix indentation and logic: This bool check and signal generation belongs inside the if block ---
             if not pd.api.types.is_bool_dtype(peak_filter_result):
                  peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
 
-            # Generate final unprocessed signal
-            df_processed['采购信号'] = base_pass & peak_filter_result
-        else:
+            # --- Restore Correct Variable: Generate FINAL signal (only if peak filter is used) ---
+            df_processed['采购信号'] = base_pass & peak_filter_result # <--- MUST be 采购信号
+        else: # This else correctly matches 'if USE_PEAK_FILTER:'
              # 如果不使用 peak filter，最终信号直接等于 base_pass
-             df_processed['采购信号'] = base_pass
+             df_processed['采购信号'] = base_pass # <--- MUST be 采购信号
              print("提示 (Pass 2): peak_filter 已禁用，最终信号仅基于核心条件。")
         # --- 结束修改 ---
 
@@ -375,7 +376,7 @@ def load_silver_data():
     csv_path = "C:\\Users\\assistant3\\Downloads\\XAG_CNY历史数据.csv" # 注意反斜杠需要转义
     print(f"尝试从指定路径加载数据: {csv_path}")
     # --- 结束修改 ---
-    
+
     try:
         # --- 恢复 CSV 读取逻辑 --- 
         # 假设 CSV 文件包含 '日期' 和 '收盘' 列
@@ -431,8 +432,6 @@ def load_silver_data():
 
     # 移除旧的 API except 块 (虽然理论上不会执行到这里了)
     # except requests.exceptions.RequestException as e:
-    #     ...
-    # except json.JSONDecodeError as e:
     #     ...
     except Exception as e: # 保留一个通用的错误捕获
          print(f"处理本地数据时发生未知错误: {e}")
@@ -887,13 +886,15 @@ def generate_signals(df_pass1, rsi_threshold): # Pass 1: Generate preliminary si
         if USE_PEAK_FILTER:
             # Pass fixed column names to peak_filter
             peak_filter_result = peak_filter(df_processed, upper_col='波动上轨_fixed', lower_col='波动下轨_fixed')
+            # --- Fix indentation and logic: This bool check and signal generation belongs inside the if block ---
             if not pd.api.types.is_bool_dtype(peak_filter_result):
                  peak_filter_result = pd.to_numeric(peak_filter_result, errors='coerce').fillna(1).astype(bool)
-            # --- 添加缩进 --- Generate preliminary signal
-            df_processed['preliminary_signal'] = base_pass & peak_filter_result
-        else:
+
+            # --- REVERT & Fix Indentation: Generate PRELIMINARY signal (only if peak filter is used) ---
+            df_processed['preliminary_signal'] = base_pass & peak_filter_result # <--- MUST be preliminary_signal
+        else: # This else correctly matches 'if USE_PEAK_FILTER:'
             # 如果不使用 peak filter，初步信号直接等于 base_pass
-            df_processed['preliminary_signal'] = base_pass
+            df_processed['preliminary_signal'] = base_pass # <--- MUST be preliminary_signal
             print("提示 (Pass 1): peak_filter 已禁用，初步信号仅基于核心条件。")
         # --- 结束修改 ---
 
@@ -944,7 +945,7 @@ def peak_filter(df, upper_col='波动上轨', lower_col='波动下轨'): # <-- A
         if not isinstance(atr_denominator, pd.Series):
             atr_denominator = pd.Series(atr_denominator, index=df.index)
         # --- 结束检查 --- 
-        
+
         atr_ratio = numerator / atr_denominator
         atr_ratio_filled = atr_ratio.fillna(0.5) # Fill NaN ratios with neutral 0.5
         overbought_atr = atr_ratio_filled > 0.8
@@ -1028,7 +1029,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     HOVER_TEXTS = {
         'price': "从数据源获取的每日收盘价。",
         'indicator': "计算思路: (价格/短期均线) * (价格/长期均线) * (1 - 动量因子)。综合衡量价格位置和波动性。",
-        # --- 修改：在描述中加入 quantile 参数 ---
+        # --- 修改：在描述中加入 quantile 参数 --- 
         'threshold': f"计算思路: 最近 {HISTORY_WINDOW} 天工业指标的 {optimized_quantile*100:.0f}% 分位数。是工业指标的动态买入参考线。",
         # --- 新增: 短期和长期阈值的悬停提示 (如果需要在其他地方使用) ---
         'threshold_short': f"计算思路: 最近 {HISTORY_WINDOW_SHORT} 天工业指标的 {optimized_quantile*100:.0f}% 分位数。",
@@ -1079,7 +1080,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
         <p><strong title='{HOVER_TEXTS['price']}'>当前价格：</strong>{price:.2f} CNY</p>
         <p><strong title='{HOVER_TEXTS['indicator']}'>核心指标（工业指标）：</strong>{indicator:.2f} <span title='{HOVER_TEXTS['threshold']}'>（买入参考阈值：低于 {threshold:.2f}）</span></p>
 
-     
+
         <h3 title='{HOVER_TEXTS['signal']}'>🛒 今日建议：{suggestion_html}</h3>
    
         <p><em>（此建议基于以下综合分析，需至少满足4个核心条件且无阻断信号）</em></p>
@@ -1244,7 +1245,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
 
     # --- Re-introduce Recent (252 days) Cost-Benefit Analysis --- 
     N_DAYS_RECENT = 252
-    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析：</h3>" 
+    recent_cost_analysis_html = f"<h3>📊 近期 ({N_DAYS_RECENT}天) 成本效益分析：</h3>"
 
     if len(df) >= N_DAYS_RECENT:
         df_recent = df.iloc[-N_DAYS_RECENT:].copy() # 获取最近 N 天数据副本
@@ -1556,7 +1557,7 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
     # --- Ensure calculation uses the parameter --- 
     rsi_oversold_diff = rsi_oversold_threshold - rsi # 正数表示低于阈值 (超卖倾向)
 
-    # --- 为指标差距添加更详细的定性描述 --- 
+    # --- 为指标差距添加更详细的定性描述 ---
     indicator_diff_desc = ""
     if indicator_threshold_diff > 0.1:
         indicator_diff_desc = f"显著低于阈值 ({indicator:.2f} vs {threshold:.2f})"
@@ -1722,7 +1723,7 @@ def create_visualization(df, optimized_rsi_threshold):
             fig.add_annotation(
                 x=point['日期'],
                 y=point['Price'] + offset, # 放在价格上方
-                 text="<b>↓</b>",
+                text="<b>↓</b>",
                 showarrow=False,
                 font=dict(size=18, color="red"),
                 bgcolor='rgba(255, 255, 255, 0.7)', # 半透明白色背景
@@ -2220,7 +2221,7 @@ if __name__ == "__main__":
             <ul>
                 <li>核心条件满足数量：<strong>{analysis_data.get('condition_scores', 'N/A')} / 6</strong> (策略要求至少满足 4 项)。</li>
                 <li>信号阻断检查：{analysis_data.get('peak_status_display', 'N/A')}。</li>
-            </ul>
+            </ul> 
         '''
 
         if analysis_data.get('signal', False):

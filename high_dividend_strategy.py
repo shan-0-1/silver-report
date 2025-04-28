@@ -11,9 +11,9 @@ from plotly.subplots import make_subplots
 
 # --- 策略参数 ---
 # 移动平均线窗口
-SMA_SHORT = 20
-SMA_MEDIUM = 50
-SMA_LONG = 120
+SMA_SHORT = 12
+SMA_MEDIUM = 30
+SMA_LONG = 60
 # RSI 参数
 RSI_WINDOW = 14
 RSI_OVERSOLD_THRESHOLD = 30 # 股票常用超卖阈值
@@ -21,7 +21,7 @@ RSI_OVERSOLD_THRESHOLD = 30 # 股票常用超卖阈值
 BB_WINDOW = 20
 BB_STD_DEV = 2
 # --- 新增：威廉%R 参数 ---
-WILLIAMS_R_WINDOW = 14
+WILLIAMS_R_WINDOW = 21
 # --- 结束新增 ---
 # 股息率参数
 # MIN_ABSOLUTE_DIVIDEND_YIELD = 0.04 # 示例：最低要求 4% 的股息率 - REMOVED
@@ -31,7 +31,7 @@ WILLIAMS_R_WINDOW = 14
 MIN_CONDITIONS_REQUIRED = 2 # 触发买入所需满足的最少核心条件数 (调整为 2，因为移除了股息条件)
 
 # --- 数据加载 ---
-def load_stock_data(file_name="WBA历史数据.csv"): # 文件名保持，但不再检查股息列
+def load_stock_data(file_name="GSBD历史数据.csv"): # <-- 确认默认文件名是 GSBD
     """
     加载股票数据，只需要包含 日期, 收盘 列。
     确保文件与脚本在同一目录，或提供完整/相对路径。
@@ -39,8 +39,8 @@ def load_stock_data(file_name="WBA历史数据.csv"): # 文件名保持，但不
     # 尝试在脚本同目录查找
     script_dir = os.path.dirname(os.path.abspath(__file__))
     possible_paths = [
-        # --- 新增：优先检查指定路径 --- 
-        os.path.join(r'C:\Users\assistant3\Downloads', file_name), # 使用 r'...' 来处理 Windows 路径反斜杠
+        # --- 优先检查指定路径 --- 
+        os.path.join(r'C:\Users\assistant3\Downloads', file_name), # <-- 确认检查 Downloads 目录
         # --- 结束新增 ---
         os.path.join(script_dir, file_name),
         file_name # 也尝试直接使用文件名（如果在工作目录）
@@ -54,7 +54,7 @@ def load_stock_data(file_name="WBA历史数据.csv"): # 文件名保持，但不
             break
 
     if csv_path is None:
-         print(f"错误：未找到 '{file_name}'。请确保文件存在于:")
+         print(f"错误：未找到 '{file_name}'。请确保文件存在于:") # <-- 错误信息会显示尝试的文件名
          for p in possible_paths:
              print(f"- {p}")
          sys.exit()
@@ -305,10 +305,10 @@ def create_stock_visualization(df):
 
 # --- 主程序 ---
 if __name__ == "__main__":
-    print("--- 股票价格择时策略分析 ---") # 修改标题
+    print("--- 股票价格择时策略分析 ---")
 
     # 1. 加载数据
-    stock_df = load_stock_data() # 使用默认文件名
+    stock_df = load_stock_data() # <-- 确认调用时未使用参数，会使用默认的 GSBD
 
     # 2. 计算指标
     print("正在计算策略指标...")
