@@ -8,8 +8,7 @@ from plotly.subplots import make_subplots
 import plotly.io as pio # 引入 plotly.io 用于 HTML 导出
 import subprocess # 用于执行 Git 命令
 import datetime # 用于生成提交信息时间戳
-#import optuna  <--- 新增: 导入 Optuna
-import traceback # <--- 新增：用于打印详细错误信息
+import traceback
 
 # --- 设置随机种子以保证可复现性 ---
 import random
@@ -368,49 +367,77 @@ MIN_CONDITIONS_REQUIRED = 4
 
 # --- 结束最小条件数设置 ---
 
-
 def load_silver_data():
-    """改进版数据加载（查找 CSV 文件）"""
-    # --- 修改数据文件路径逻辑 ---
-    # 优先尝试从脚本同目录或 _MEIPASS (打包环境) 加载
-    possible_paths = [
-        os.path.join(BASE_DIR, 'XAG_CNY历史数据.csv'), # 修改文件名：USD -> CNY
-        r'C:\Users\assistant3\Downloads\XAG_CNY历史数据.csv' # 修改文件名：USD -> CNY
-    ]
-
-    csv_path = None
-    for path in possible_paths:
-        if os.path.exists(path):
-            csv_path = path
-            print(f"成功找到数据文件: {csv_path}")
-            break
-
-    if csv_path is None:
-         print(f"错误：在以下位置均未找到 'XAG_CNY历史数据.csv':")
-         for p in possible_paths:
-             print(f"- {p}")
-         exit()
+    """从本地 CSV 文件加载 XAG/CNY 历史数据"""
+    # --- 修改: 直接指定 CSV 文件路径 --- 
+    csv_filename = "XAG_CNY历史数据.csv" # 假设的文件名
+    # 直接使用用户提供的路径
+    csv_path = "C:\\Users\\assistant3\\Downloads\\XAG_CNY历史数据.csv" # 注意反斜杠需要转义
+    print(f"尝试从指定路径加载数据: {csv_path}")
     # --- 结束修改 ---
-
+    
     try:
-        df = pd.read_csv(
-            csv_path, # 使用找到的路径
-            usecols=['日期', '收盘'],
-            parse_dates=['日期'],
-            converters={
-                '收盘': lambda x: float(str(x).replace(',', ''))
-            }
-        ).rename(columns={'收盘': 'Price'}).dropna(subset=['Price'])
+        # --- 恢复 CSV 读取逻辑 --- 
+        # 假设 CSV 文件包含 '日期' 和 '收盘' 列
+        # 尝试不同的编码，以防默认 UTF-8 失败
+        try:
+            df = pd.read_csv(csv_path, parse_dates=['日期'])
+        except UnicodeDecodeError:
+            print("尝试 UTF-8 编码失败，尝试 GBK 编码...")
+            df = pd.read_csv(csv_path, parse_dates=['日期'], encoding='gbk')
+        except FileNotFoundError:
+             print(f"错误：未找到数据文件 '{csv_filename}'。请确保该文件与脚本在同一目录下，或提供正确路径。")
+             exit()
+        except Exception as e:
+             print(f"读取 CSV 文件 '{csv_filename}' 时发生未知错误: {e}")
+             traceback.print_exc()
+             exit()
 
-        # 确保日期列为tz-naive并排序
-        df['日期'] = df['日期'].dt.tz_localize(None).dt.normalize()
-        df = df.sort_values('日期', ascending=True).reset_index(drop=True)
-        df['Price'] = df['Price'].ffill().bfill()
+        print(f"成功从 {csv_filename} 加载 {len(df)} 条原始数据。")
+
+        # 检查必需的列
+        if '日期' not in df.columns or '收盘' not in df.columns:
+             print("错误：CSV 文件必须包含 '日期' 和 '收盘' 列。")
+             exit()
+
+        # 重命名列并设置索引
+        df = df.rename(columns={'收盘': 'Price'})
+        df = df.set_index('日期')
+        df = df[['Price']] # 只保留价格列
+
+        # 确保价格是数字
+        df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
+        df = df.dropna(subset=['Price'])
+
+        # 按日期排序
+        df = df.sort_index(ascending=True)
+
+        # 筛选最近两年的数据
+        today = datetime.date.today()
+        two_years_ago_date = today - datetime.timedelta(days=2*365)
+        df = df[df.index >= pd.to_datetime(two_years_ago_date)]
+
+        if df.empty:
+            print("错误：筛选最近两年数据后，DataFrame 为空。请确保 CSV 文件包含足够近的历史数据。")
+            exit()
+
+        # 重置索引并添加交易日
+        df = df.reset_index()
         df['交易日'] = df.index + 1
+
+        print(f"成功加载并处理 {len(df)} 条 XAG/CNY 数据 (来自 CSV，最近两年)。")
         return df
-    except Exception as e:
-        print(f"数据加载或处理失败：{str(e)}")
-        exit()
+        # --- 结束恢复 CSV 读取逻辑 --- 
+
+    # 移除旧的 API except 块 (虽然理论上不会执行到这里了)
+    # except requests.exceptions.RequestException as e:
+    #     ...
+    # except json.JSONDecodeError as e:
+    #     ...
+    except Exception as e: # 保留一个通用的错误捕获
+         print(f"处理本地数据时发生未知错误: {e}")
+         traceback.print_exc()
+         exit()
 
 
 WINDOW_WEIGHT_FACTOR = 0.8  # 窗口参数在决策中的权重占比
