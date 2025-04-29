@@ -1363,6 +1363,31 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
                 results_recent['低于全部阈值'] = ("N/A", "无触发", 0, "N/A")
             # --- 结束新增 ---
 
+            # --- 6. 新增: 策略信号 & 低于全部阈值 (Recent) ---
+            combined_signal_recent = (df_recent['采购信号']) & \
+                                     (df_recent['工业指标'] < df_recent['基线阈值_短']) & \
+                                     (df_recent['工业指标'] < df_recent['基线阈值']) & \
+                                     (df_recent['工业指标'] < df_recent['基线阈值_长'])
+            combined_buys_recent = df_recent[combined_signal_recent]
+            combined_points_recent = len(combined_buys_recent)
+            if combined_points_recent > 0:
+                avg_combined_cost_recent = safe_float(combined_buys_recent['Price'].mean())
+                advantage_rate = ((avg_market_price_recent - avg_combined_cost_recent) / avg_market_price_recent) * 100 if avg_market_price_recent > 0 else 0
+                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_recent > 0 else "N/A (市场均价为0)"
+                avg_interval_recent = total_days_recent / combined_points_recent
+                # --- 计算最大间隔 ---
+                max_interval_recent = 'N/A'
+                if combined_points_recent > 1:
+                    intervals = np.diff(combined_buys_recent.index)
+                    if len(intervals) > 0:
+                        max_interval_recent = intervals.max()
+                avg_interval_recent_text = f"{avg_interval_recent:.1f} / {max_interval_recent}"
+                # --- 结束计算最大间隔 ---
+                results_recent['策略信号 & 低于全部阈值'] = (f"{avg_combined_cost_recent:.2f}", advantage_text, combined_points_recent, avg_interval_recent_text)
+            else:
+                 results_recent['策略信号 & 低于全部阈值'] = ("N/A", "无触发", 0, "N/A")
+            # --- 结束新增 (6) ---
+
             # 构建 HTML 表格 (Recent)
             recent_cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
             # --- 修改表头悬停提示 ---
@@ -1510,6 +1535,31 @@ def generate_report(df, optimized_quantile, optimized_rsi_threshold):
             else:
                  results['低于全部阈值'] = ("N/A", "无触发", 0, "N/A")
             # --- 结束新增 ---
+
+            # --- 6. 新增: 策略信号 & 低于全部阈值 ---
+            combined_signal_full = (df_analysis_scope['采购信号']) & \
+                                    (df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值_短']) & \
+                                    (df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值']) & \
+                                    (df_analysis_scope['工业指标'] < df_analysis_scope['基线阈值_长'])
+            combined_buys_full = df_analysis_scope[combined_signal_full]
+            combined_points = len(combined_buys_full)
+            if combined_points > 0:
+                avg_combined_cost = safe_float(combined_buys_full['Price'].mean())
+                advantage_rate = ((avg_market_price_full - avg_combined_cost) / avg_market_price_full) * 100 if avg_market_price_full > 0 else 0
+                advantage_text = f"<span style='color: {'green' if advantage_rate >= 0 else 'red'};'>{advantage_rate:+.1f}%</span>" if avg_market_price_full > 0 else "N/A (市场均价为0)"
+                avg_interval = total_days_in_scope / combined_points
+                # --- 计算最大间隔 ---
+                max_interval = 'N/A'
+                if combined_points > 1:
+                    intervals = np.diff(combined_buys_full.index)
+                    if len(intervals) > 0:
+                        max_interval = intervals.max()
+                avg_interval_text = f"{avg_interval:.1f} / {max_interval}"
+                # --- 结束计算最大间隔 ---
+                results['策略信号 & 低于全部阈值'] = (f"{avg_combined_cost:.2f}", advantage_text, combined_points, avg_interval_text)
+            else:
+                 results['策略信号 & 低于全部阈值'] = ("N/A", "无触发", 0, "N/A")
+            # --- 结束新增 (6) ---
 
             # 构建 HTML 表格展示结果
             cost_analysis_html += "<table border='1' style='border-collapse: collapse; width: 100%;'>"
